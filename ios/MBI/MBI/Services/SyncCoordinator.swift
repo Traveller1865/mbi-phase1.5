@@ -57,7 +57,13 @@ class SyncCoordinator: ObservableObject {
             syncState = .complete
 
         } catch {
-            syncState = .failed(error.localizedDescription)
+            let msg = error.localizedDescription
+            // 404 means no data for today — not an error, just empty
+            if msg.contains("404") {
+                syncState = .complete
+            } else {
+                syncState = .failed(msg)
+            }
             // Still try to load cached dashboard
             await loadDashboard(userId: userId)
         }
@@ -96,8 +102,16 @@ class SyncCoordinator: ObservableObject {
 
     func loadDashboard(userId: String) async {
         do {
+            // Try today first
             if let data = try await supabase.fetchTodayDashboard(userId: userId) {
                 dashboard = data
+                return
+            }
+            // Fall back to most recent score
+            if let data = try await supabase.fetchMostRecentDashboard(userId:userId){
+                dashboard = data
+            } else {
+                print("[loadDashboard] fetchMostRecentDashboard returned nil")
             }
         } catch {
             print("[loadDashboard] \(error)")

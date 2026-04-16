@@ -53,15 +53,8 @@ class SupabaseService: ObservableObject {
 
     // MARK: - Session Refresh
 
-    /// Call this on cold launch before any authenticated request.
-    /// Reads stored refresh token, exchanges it for a new access + refresh token pair.
     func refreshSessionIfNeeded() async {
-        guard let stored = loadSavedSession() else {
-            // No stored session — user needs to sign in
-            return
-        }
-
-        // Try to refresh using the stored refresh token
+        guard let stored = loadSavedSession() else { return }
         let body: [String: Any] = ["refresh_token": stored.refreshToken]
         do {
             let data = try await post(
@@ -74,7 +67,6 @@ class SupabaseService: ObservableObject {
             saveSession(newSession)
             try await loadCurrentUser(userId: newSession.userId)
         } catch {
-            // Refresh token expired or invalid — clear session, force sign in
             clearSavedSession()
         }
     }
@@ -140,7 +132,13 @@ class SupabaseService: ObservableObject {
         let scoreURL = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&date=eq.\(today)&select=*")!
         let scoreData = try await getRequest(url: scoreURL)
         guard let scores = scoreData as? [[String: Any]], let first = scores.first else { return nil }
-        let score = try decode(DailyScore.self, from: first)
+        let score: DailyScore
+        do {
+            score = try decode(DailyScore.self, from: first)
+        } catch {
+            print("[fetchMostRecentDashboard] decode failed: \(error)")
+            throw error
+        }
 
         let explURL = URL(string: "\(Config.supabaseURL)/rest/v1/explanations?user_id=eq.\(userId)&date=eq.\(today)&select=*")!
         let explData = try await getRequest(url: explURL)
@@ -158,12 +156,41 @@ class SupabaseService: ObservableObject {
 
         return DashboardData(score: score, explanation: explanation, recentScores: recentScores)
     }
+    
+    func fetchMostRecentDashboard(userId: String) async throws -> DashboardData? {
+        let scoreURL = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&select=*&order=date.desc&limit=1")!
+        let scoreData = try await getRequest(url: scoreURL)
+        guard let scores = scoreData as? [[String: Any]], let first = scores.first else { return nil }
+        let score = try decode(DailyScore.self, from: first)
+        let date = score.date
+
+        let explURL = URL(string: "\(Config.supabaseURL)/rest/v1/explanations?user_id=eq.\(userId)&date=eq.\(date)&select=*")!
+        let explData = try await getRequest(url: explURL)
+        var explanation: Explanation?
+        if let expls = explData as? [[String: Any]], let firstExpl = expls.first {
+            explanation = try? decode(Explanation.self, from: firstExpl)
+        }
+
+        let trendURL = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&select=chronos_score,date&order=date.desc&limit=7")!
+        let trendData = try await getRequest(url: trendURL)
+        let recentScores = ((trendData as? [[String: Any]]) ?? [])
+            .compactMap { $0["chronos_score"] as? Double }
+            .reversed()
+            .map { $0 }
+
+        return DashboardData(score: score, explanation: explanation, recentScores: recentScores)
+    }
 
     func triggerDailySync(userId: String, payload: [String: Any]) async throws {
-        let today = todayString()
+        // Extract the date from the payload so score/narrate use the same date as ingest
+        guard let payloadDate = (payload["metrics"] as? [String: Any]).flatMap({ _ in payload["date"] as? String })
+                ?? (payload["date"] as? String) else {
+            throw MBIError.syncFailed("Payload missing date")
+        }
+        
         _ = try await callEdgeFunction(url: Config.ingestURL, body: ["payload": payload])
-        _ = try await callEdgeFunction(url: Config.scoreURL, body: ["userId": userId, "date": today])
-        _ = try await callEdgeFunction(url: Config.narrateURL, body: ["userId": userId, "date": today])
+        _ = try await callEdgeFunction(url: Config.scoreURL, body: ["userId": userId, "date": payloadDate])
+        _ = try await callEdgeFunction(url: Config.narrateURL, body: ["userId": userId, "date": payloadDate])
     }
 
     // MARK: - Feedback
@@ -209,7 +236,9 @@ class SupabaseService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -221,7 +250,9 @@ class SupabaseService: ObservableObject {
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (_, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response)
@@ -231,7 +262,9 @@ class SupabaseService: ObservableObject {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response)
         return try JSONSerialization.jsonObject(with: data)
@@ -243,7 +276,9 @@ class SupabaseService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        if let token = accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        if let token = accessToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response)
@@ -283,50 +318,64 @@ enum MBIError: Error, LocalizedError {
     }
 }
 
-// MARK: - Keychain Session Persistence
+// MARK: - Session Persistence (Keychain + UserDefaults fallback)
 extension SupabaseService {
     private static let keychainService = "com.mbi.chronos"
     private static let keychainAccount = "mbi_session"
+    private static let udKey = "mbi_session_v2"
 
     func saveSession(_ session: AuthSession) {
         guard let data = try? JSONEncoder().encode(session) else { return }
 
+        // Try Keychain
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
             kSecAttrService as String: Self.keychainService,
             kSecAttrAccount as String: Self.keychainAccount
         ]
-
-        // Delete any existing entry first
         SecItemDelete(query as CFDictionary)
-
-        // Add new entry
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(attributes as CFDictionary, nil)
 
-        SecItemAdd(attributes as CFDictionary, nil)
+        if status != errSecSuccess {
+            print("[MBI] Keychain write failed (\(status)), using UserDefaults fallback")
+        }
+
+        // Always write UserDefaults as fallback
+        UserDefaults.standard.set(data, forKey: Self.udKey)
     }
 
     @discardableResult
     func loadSavedSession() -> AuthSession? {
+        // Try Keychain first
         let query: [String: Any] = [
-            kSecClass as String:            kSecClassGenericPassword,
-            kSecAttrService as String:      Self.keychainService,
-            kSecAttrAccount as String:      Self.keychainAccount,
-            kSecReturnData as String:       true,
-            kSecMatchLimit as String:       kSecMatchLimitOne
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrService as String: Self.keychainService,
+            kSecAttrAccount as String: Self.keychainAccount,
+            kSecReturnData as String:  true,
+            kSecMatchLimit as String:  kSecMatchLimitOne
         ]
-
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let session = try? JSONDecoder().decode(AuthSession.self, from: data)
-        else { return nil }
+        if status == errSecSuccess,
+           let data = result as? Data,
+           let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
+            print("[MBI] Session loaded from Keychain")
+            return session
+        }
 
-        return session
+        // Fall back to UserDefaults
+        if let data = UserDefaults.standard.data(forKey: Self.udKey),
+           let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
+            print("[MBI] Session loaded from UserDefaults fallback")
+            return session
+        }
+
+        print("[MBI] No stored session found")
+        return nil
     }
 
     func clearSavedSession() {
@@ -336,6 +385,7 @@ extension SupabaseService {
             kSecAttrAccount as String: Self.keychainAccount
         ]
         SecItemDelete(query as CFDictionary)
+        UserDefaults.standard.removeObject(forKey: Self.udKey)
         self.session = nil
         self.currentUser = nil
     }

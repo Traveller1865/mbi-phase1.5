@@ -1,6 +1,5 @@
-// ios/MBI/Views/DashboardView.swift
-// MBI Phase 1 — Daily Dashboard + Main Tab Container
-// Primary daily surface: score, band, top 2 drivers, explanation, nudge, sparkline
+// ios/MBI/MBI/Views/DashboardView.swift
+// MBI Phase 1.5 — Daily Dashboard + Main Tab Container
 
 import SwiftUI
 
@@ -12,12 +11,6 @@ struct MainTabView: View {
     @EnvironmentObject var supabase: SupabaseService
     @EnvironmentObject var sync: SyncCoordinator
     @State private var selectedTab = 0
-
-    var isAdmin: Bool {
-        // Checked against user_roles — simplified for Phase 1
-        // Full role check happens server-side; this just controls tab visibility
-        false // Set to true for founder device
-    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -51,6 +44,7 @@ struct DashboardView: View {
     @EnvironmentObject var sync: SyncCoordinator
     @EnvironmentObject var supabase: SupabaseService
     @State private var showFeedback = false
+    @State private var showSignOutConfirm = false
 
     var body: some View {
         ZStack {
@@ -58,7 +52,8 @@ struct DashboardView: View {
 
             ScrollView {
                 VStack(spacing: 0) {
-                    // Header
+
+                    // ── Header ──
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(greeting())
@@ -70,37 +65,41 @@ struct DashboardView: View {
                         }
                         Spacer()
                         SyncStatusBadge(state: sync.syncState)
+
+                        // Sign out button
+                        Button(action: { showSignOutConfirm = true }) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.3))
+                        }
+                        .padding(.leading, 12)
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
                     .padding(.bottom, 24)
 
+                    // ── Content ──
                     if let data = sync.dashboard {
-                        // Score Card
                         ScoreCard(score: data.score)
                             .padding(.horizontal, 20)
                             .padding(.bottom, 20)
 
-                        // Sparkline
                         if data.recentScores.count > 1 {
                             SparklineCard(scores: data.recentScores)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 20)
                         }
 
-                        // Explanation
                         if let explanation = data.explanation {
                             ExplanationCard(explanation: explanation)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 20)
 
-                            // Nudge
                             NudgeCard(nudge: explanation.nudgeText)
                                 .padding(.horizontal, 20)
                                 .padding(.bottom, 20)
                         }
 
-                        // Feedback
                         FeedbackPromptCard(score: data.score) {
                             showFeedback = true
                         }
@@ -110,15 +109,20 @@ struct DashboardView: View {
                     } else if case .syncing(let msg) = sync.syncState {
                         SyncingStateView(message: msg)
                             .padding(.top, 60)
+
                     } else if case .failed(let msg) = sync.syncState {
                         ErrorStateView(message: msg) {
                             Task {
                                 if let userId = supabase.session?.userId {
+                                    if msg.contains("401") {
+                                        await supabase.refreshSessionIfNeeded()
+                                    }
                                     await sync.runDailySync(userId: userId)
                                 }
                             }
                         }
                         .padding(.top, 60)
+
                     } else {
                         EmptyScoreView()
                             .padding(.top, 60)
@@ -130,6 +134,14 @@ struct DashboardView: View {
             if let data = sync.dashboard {
                 FeedbackView(score: data.score)
             }
+        }
+        .confirmationDialog("Sign out?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
+            Button("Sign Out", role: .destructive) {
+                supabase.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You'll need to sign back in.")
         }
     }
 
@@ -150,10 +162,10 @@ struct ScoreCard: View {
 
     var bandColor: Color {
         switch score.scoreBand {
-        case .thriving: return Color(red: 0.3, green: 0.85, blue: 0.5)
-        case .recovering: return Color(red: 0.4, green: 0.7, blue: 1.0)
-        case .drifting: return Color(red: 1.0, green: 0.75, blue: 0.2)
-        case .redline: return Color(red: 1.0, green: 0.35, blue: 0.35)
+        case .thriving:  return Color(red: 0.3,  green: 0.85, blue: 0.5)
+        case .recovering: return Color(red: 0.4,  green: 0.7,  blue: 1.0)
+        case .drifting:  return Color(red: 1.0,  green: 0.75, blue: 0.2)
+        case .redline:   return Color(red: 1.0,  green: 0.35, blue: 0.35)
         }
     }
 
@@ -163,26 +175,22 @@ struct ScoreCard: View {
                 .fill(Color.white.opacity(0.05))
 
             VStack(spacing: 0) {
-                // Date
                 Text(formattedDate())
                     .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.35))
                     .padding(.top, 20)
 
-                // Score number
                 Text("\(Int(score.chronosScore))")
                     .font(.system(size: 80, weight: .thin))
                     .foregroundColor(bandColor)
                     .padding(.top, 4)
 
-                // Band label
                 Text(score.scoreBand.rawValue.uppercased())
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .tracking(3)
                     .foregroundColor(bandColor.opacity(0.8))
                     .padding(.top, 2)
 
-                // Provisional badge
                 if score.isProvisional {
                     Text("BUILDING BASELINE")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -191,14 +199,12 @@ struct ScoreCard: View {
                         .padding(.top, 6)
                 }
 
-                // Divider
                 Rectangle()
                     .fill(Color.white.opacity(0.08))
                     .frame(height: 1)
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
 
-                // Drivers
                 HStack(spacing: 0) {
                     DriverPill(label: "Driver 1", value: formatMetric(score.driver1))
                     Divider()
@@ -245,7 +251,7 @@ struct DriverPill: View {
 }
 
 // ─────────────────────────────────────────
-// SPARKLINE CARD (7-day trend)
+// SPARKLINE CARD
 // ─────────────────────────────────────────
 
 struct SparklineCard: View {
@@ -293,7 +299,6 @@ struct SparklinePath: View {
         Canvas { context, _ in
             guard scores.count > 1 else { return }
             let step = size.width / CGFloat(scores.count - 1)
-
             var path = Path()
             for (i, score) in scores.enumerated() {
                 let x = CGFloat(i) * step
@@ -301,10 +306,8 @@ struct SparklinePath: View {
                 if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
                 else { path.addLine(to: CGPoint(x: x, y: y)) }
             }
-
             context.stroke(path, with: .color(.white.opacity(0.6)), lineWidth: 1.5)
 
-            // Dot on latest
             if let last = scores.last {
                 let x = size.width
                 let y = size.height - CGFloat((last - minScore) / range) * size.height
@@ -431,7 +434,7 @@ struct SyncStatusBadge: View {
 }
 
 // ─────────────────────────────────────────
-// EMPTY / LOADING STATES
+// EMPTY / LOADING / ERROR STATES
 // ─────────────────────────────────────────
 
 struct SyncingStateView: View {
@@ -451,7 +454,8 @@ struct ErrorStateView: View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 36)).foregroundColor(.orange.opacity(0.6))
-            Text(message).font(.system(size: 14)).foregroundColor(.white.opacity(0.5))
+            Text(message)
+                .font(.system(size: 14)).foregroundColor(.white.opacity(0.5))
                 .multilineTextAlignment(.center).padding(.horizontal, 40)
             Button("Try Again", action: onRetry)
                 .font(.system(size: 15, weight: .medium)).foregroundColor(.white)

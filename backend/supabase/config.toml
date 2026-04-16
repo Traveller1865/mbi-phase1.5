@@ -48,16 +48,16 @@ policy = "oneshot"
 inspector_port = 8083
 
 [functions.ingest]
-verify_jwt = true
+verify_jwt = false
 
 [functions.score]
-verify_jwt = true
+verify_jwt = false
 
 [functions.narrate]
-verify_jwt = true
+verify_jwt = false
 
 [functions.admin]
-verify_jwt = true
+verify_jwt = false
 
 [analytics]
 enabled = false
