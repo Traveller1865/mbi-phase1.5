@@ -1,14 +1,17 @@
-// ios/MBI/Services/SupabaseService.swift
-// MBI Phase 1 — Supabase Client & API Layer
+// ios/MBI/MBI/Services/SupabaseService.swift
+// MBI Phase 1.5 — Supabase Client & API Layer
 
 import Foundation
+import Security
 
 struct AuthSession: Codable {
     let accessToken: String
+    let refreshToken: String
     let userId: String
 
     enum CodingKeys: String, CodingKey {
         case accessToken = "access_token"
+        case refreshToken = "refresh_token"
         case userId = "user_id"
     }
 }
@@ -27,32 +30,71 @@ class SupabaseService: ObservableObject {
     func signUp(email: String, password: String) async throws -> AuthSession {
         let body: [String: Any] = ["email": email, "password": password]
         let data = try await post(path: "/auth/v1/signup", body: body, auth: false)
-        guard let accessToken = data["access_token"] as? String,
-              let userDict = data["user"] as? [String: Any],
-              let userId = userDict["id"] as? String
-        else { throw MBIError.authFailed("Sign up response malformed") }
-        let sess = AuthSession(accessToken: accessToken, userId: userId)
+        let sess = try parseAuthSession(from: data)
         self.session = sess
-        try await createUserRow(userId: userId, email: email)
+        saveSession(sess)
+        try await createUserRow(userId: sess.userId, email: email)
         return sess
     }
 
     func signIn(email: String, password: String) async throws -> AuthSession {
         let body: [String: Any] = ["email": email, "password": password]
         let data = try await post(path: "/auth/v1/token?grant_type=password", body: body, auth: false)
-        guard let accessToken = data["access_token"] as? String,
-              let userDict = data["user"] as? [String: Any],
-              let userId = userDict["id"] as? String
-        else { throw MBIError.authFailed("Sign in response malformed") }
-        let sess = AuthSession(accessToken: accessToken, userId: userId)
+        let sess = try parseAuthSession(from: data)
         self.session = sess
-        try await loadCurrentUser(userId: userId)
+        saveSession(sess)
+        try await loadCurrentUser(userId: sess.userId)
         return sess
     }
 
     func signOut() {
-        self.session = nil
-        self.currentUser = nil
+        clearSavedSession()
+    }
+
+    // MARK: - Session Refresh
+
+    /// Call this on cold launch before any authenticated request.
+    /// Reads stored refresh token, exchanges it for a new access + refresh token pair.
+    func refreshSessionIfNeeded() async {
+        guard let stored = loadSavedSession() else {
+            // No stored session — user needs to sign in
+            return
+        }
+
+        // Try to refresh using the stored refresh token
+        let body: [String: Any] = ["refresh_token": stored.refreshToken]
+        do {
+            let data = try await post(
+                path: "/auth/v1/token?grant_type=refresh_token",
+                body: body,
+                auth: false
+            )
+            let newSession = try parseAuthSession(from: data)
+            self.session = newSession
+            saveSession(newSession)
+            try await loadCurrentUser(userId: newSession.userId)
+        } catch {
+            // Refresh token expired or invalid — clear session, force sign in
+            clearSavedSession()
+        }
+    }
+
+    // MARK: - Auth Response Parser
+
+    private func parseAuthSession(from data: [String: Any]) throws -> AuthSession {
+        guard
+            let accessToken = data["access_token"] as? String,
+            let refreshToken = data["refresh_token"] as? String,
+            let userDict = data["user"] as? [String: Any],
+            let userId = userDict["id"] as? String
+        else {
+            throw MBIError.authFailed("Auth response malformed — missing tokens or user id")
+        }
+        return AuthSession(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            userId: userId
+        )
     }
 
     // MARK: - User Profile
@@ -127,7 +169,12 @@ class SupabaseService: ObservableObject {
     // MARK: - Feedback
 
     func submitFeedback(scoreId: String, userId: String, date: String, feltAccurate: Bool, note: String?) async throws {
-        var body: [String: Any] = ["score_id": scoreId, "user_id": userId, "date": date, "felt_accurate": feltAccurate]
+        var body: [String: Any] = [
+            "score_id": scoreId,
+            "user_id": userId,
+            "date": date,
+            "felt_accurate": feltAccurate
+        ]
         if let note = note, !note.isEmpty { body["note"] = note }
         try await postToTable(table: "feedback", body: body)
     }
@@ -233,5 +280,63 @@ enum MBIError: Error, LocalizedError {
         case .httpError(let code): return "HTTP error \(code)"
         case .syncFailed(let msg): return "Sync failed: \(msg)"
         }
+    }
+}
+
+// MARK: - Keychain Session Persistence
+extension SupabaseService {
+    private static let keychainService = "com.mbi.chronos"
+    private static let keychainAccount = "mbi_session"
+
+    func saveSession(_ session: AuthSession) {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+
+        let query: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrService as String: Self.keychainService,
+            kSecAttrAccount as String: Self.keychainAccount
+        ]
+
+        // Delete any existing entry first
+        SecItemDelete(query as CFDictionary)
+
+        // Add new entry
+        var attributes = query
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+
+        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    @discardableResult
+    func loadSavedSession() -> AuthSession? {
+        let query: [String: Any] = [
+            kSecClass as String:            kSecClassGenericPassword,
+            kSecAttrService as String:      Self.keychainService,
+            kSecAttrAccount as String:      Self.keychainAccount,
+            kSecReturnData as String:       true,
+            kSecMatchLimit as String:       kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let session = try? JSONDecoder().decode(AuthSession.self, from: data)
+        else { return nil }
+
+        return session
+    }
+
+    func clearSavedSession() {
+        let query: [String: Any] = [
+            kSecClass as String:       kSecClassGenericPassword,
+            kSecAttrService as String: Self.keychainService,
+            kSecAttrAccount as String: Self.keychainAccount
+        ]
+        SecItemDelete(query as CFDictionary)
+        self.session = nil
+        self.currentUser = nil
     }
 }
