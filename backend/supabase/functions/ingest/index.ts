@@ -1,20 +1,16 @@
 // backend/supabase/functions/ingest/index.ts
 // MBI Phase 1 — Ingestion & Canonicalization Layer
-// Sprint 2 | Raw HealthKit semantics never leak past this layer.
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_URL = Deno.env.get("https://sjhysadnpswrcpmezmoc.supabase.co/functions/v1/ingest")!;
+const SUPABASE_SERVICE_KEY = Deno.env.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqaHlzYWRucHN3cmNwbWV6bW9jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjI3MDcyMywiZXhwIjoyMDkxODQ2NzIzfQ.1FjI_Lteygh5Z0FUeBXQsaa3mS4Qm0oLd1FoI49qysE")!;
 const SOURCE_VERSION = "1.0";
 
-// ─────────────────────────────────────────
-// TYPES — raw HealthKit payload from iOS
-// ─────────────────────────────────────────
 interface RawHealthKitPayload {
   userId: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   metrics: {
     hrv_ms?: number | null;
     resting_hr_bpm?: number | null;
@@ -27,9 +23,6 @@ interface RawHealthKitPayload {
   };
 }
 
-// ─────────────────────────────────────────
-// VALIDATION & CANONICALIZATION
-// ─────────────────────────────────────────
 interface DataQualityFlags {
   missing_metrics: string[];
   out_of_range: Record<string, string>;
@@ -48,7 +41,6 @@ function canonicalize(raw: RawHealthKitPayload): {
 
   const clean: Record<string, number | null> = {};
 
-  // HRV: 0–300ms reasonable range
   if (raw.metrics.hrv_ms == null) {
     flags.missing_metrics.push("hrv_ms");
     clean.hrv_ms = null;
@@ -59,7 +51,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.hrv_ms = Math.round(raw.metrics.hrv_ms * 10) / 10;
   }
 
-  // Resting HR: 30–200 bpm
   if (raw.metrics.resting_hr_bpm == null) {
     flags.missing_metrics.push("resting_hr_bpm");
     clean.resting_hr_bpm = null;
@@ -70,7 +61,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.resting_hr_bpm = Math.round(raw.metrics.resting_hr_bpm * 10) / 10;
   }
 
-  // Respiratory Rate: 6–40 rpm
   if (raw.metrics.respiratory_rate_rpm == null) {
     flags.missing_metrics.push("respiratory_rate_rpm");
     clean.respiratory_rate_rpm = null;
@@ -81,7 +71,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.respiratory_rate_rpm = Math.round(raw.metrics.respiratory_rate_rpm * 10) / 10;
   }
 
-  // Sleep Duration: 0–16 hours
   if (raw.metrics.sleep_duration_hrs == null) {
     flags.missing_metrics.push("sleep_duration_hrs");
     clean.sleep_duration_hrs = null;
@@ -92,7 +81,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.sleep_duration_hrs = Math.round(raw.metrics.sleep_duration_hrs * 100) / 100;
   }
 
-  // Sleep Efficiency: 0–100%
   if (raw.metrics.sleep_efficiency_pct == null) {
     flags.missing_metrics.push("sleep_efficiency_pct");
     clean.sleep_efficiency_pct = null;
@@ -103,7 +91,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.sleep_efficiency_pct = Math.round(raw.metrics.sleep_efficiency_pct * 10) / 10;
   }
 
-  // Steps: 0–100,000
   if (raw.metrics.steps == null) {
     flags.missing_metrics.push("steps");
     clean.steps = null;
@@ -111,7 +98,6 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.steps = Math.max(0, Math.round(raw.metrics.steps));
   }
 
-  // Active Minutes: 0–1440
   if (raw.metrics.active_minutes == null) {
     flags.missing_metrics.push("active_minutes");
     clean.active_minutes = null;
@@ -119,12 +105,10 @@ function canonicalize(raw: RawHealthKitPayload): {
     clean.active_minutes = Math.max(0, Math.round(raw.metrics.active_minutes));
   }
 
-  // Distance: supporting only, no validation gate
   clean.distance_km = raw.metrics.distance_km != null
     ? Math.round(raw.metrics.distance_km * 100) / 100
     : null;
 
-  // Completeness: all 7 primary metrics present
   const primaryMetrics = ["hrv_ms", "resting_hr_bpm", "respiratory_rate_rpm", "sleep_duration_hrs", "sleep_efficiency_pct", "steps", "active_minutes"];
   flags.is_complete = primaryMetrics.every((m) => clean[m] != null);
 
@@ -140,47 +124,68 @@ function canonicalize(raw: RawHealthKitPayload): {
   };
 }
 
-// ─────────────────────────────────────────
-// HANDLER
-// ─────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, content-type" } });
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "authorization, content-type",
+      },
+    });
   }
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return new Response("Unauthorized", { status: 401 });
+    // Validate env vars are present
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return new Response(
+        JSON.stringify({ error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-    const body: { payload: RawHealthKitPayload | RawHealthKitPayload[] } = await req.json();
-    const payloads = Array.isArray(body.payload) ? body.payload : [body.payload];
+    const body = await req.json();
+    const payloads: RawHealthKitPayload[] = Array.isArray(body.payload)
+      ? body.payload
+      : [body.payload];
 
     const results = [];
 
     for (const payload of payloads) {
       const { row, flags } = canonicalize(payload);
 
-      // Upsert — idempotent on (user_id, date)
       const { data, error } = await supabase
         .from("daily_inputs")
         .upsert(row, { onConflict: "user_id,date" })
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        // Return the actual Postgres error message, not [object Object]
+        return new Response(
+          JSON.stringify({
+            error: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+        );
+      }
+
       results.push({ date: payload.date, id: data.id, flags });
     }
 
-    return new Response(JSON.stringify({ success: true, ingested: results }), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    return new Response(
+      JSON.stringify({ success: true, ingested: results }),
+      { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
+
   } catch (err) {
-    console.error("[ingest]", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
-    });
+    const message = err instanceof Error ? err.message : String(err);
+    return new Response(
+      JSON.stringify({ error: message }),
+      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+    );
   }
 });
