@@ -4,8 +4,9 @@
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = Deno.env.get("https://sjhysadnpswrcpmezmoc.supabase.co/functions/v1/ingest")!;
-const SUPABASE_SERVICE_KEY = Deno.env.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqaHlzYWRucHN3cmNwbWV6bW9jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjI3MDcyMywiZXhwIjoyMDkxODQ2NzIzfQ.1FjI_Lteygh5Z0FUeBXQsaa3mS4Qm0oLd1FoI49qysE")!;
+// Supabase auto-injects these — no need to set them as custom secrets
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SOURCE_VERSION = "1.0";
 
 interface RawHealthKitPayload {
@@ -135,14 +136,6 @@ serve(async (req) => {
   }
 
   try {
-    // Validate env vars are present
-    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-      return new Response(
-        JSON.stringify({ error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
     const body = await req.json();
     const payloads: RawHealthKitPayload[] = Array.isArray(body.payload)
@@ -161,7 +154,6 @@ serve(async (req) => {
         .single();
 
       if (error) {
-        // Return the actual Postgres error message, not [object Object]
         return new Response(
           JSON.stringify({
             error: error.message,
@@ -169,7 +161,13 @@ serve(async (req) => {
             details: error.details,
             hint: error.hint,
           }),
-          { status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+          {
+            status: 400,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+          }
         );
       }
 
@@ -178,14 +176,25 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ success: true, ingested: results }),
-      { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
     );
 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return new Response(
       JSON.stringify({ error: message }),
-      { status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      }
     );
   }
 });
