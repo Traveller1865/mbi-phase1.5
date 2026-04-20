@@ -26,6 +26,9 @@
 		032E30C829996E3B937CD459 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
 		12B35E9094BB71CE8C98E373 /* MBI.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MBI.entitlements; sourceTree = "<group>"; };
 		13BA49ADAB52A97D0E4B724A /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
+		1ED358312F9692EB00AFCF44 /* CormorantGaramond-Italic-VariableFont_wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "CormorantGaramond-Italic-VariableFont_wght.ttf"; sourceTree = "<group>"; };
+		1ED358322F9692EB00AFCF44 /* CormorantGaramond-VariableFont_wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "CormorantGaramond-VariableFont_wght.ttf"; sourceTree = "<group>"; };
+		1ED358332F9692EB00AFCF44 /* Jost-VariableFont_wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Jost-VariableFont_wght.ttf"; sourceTree = "<group>"; };
 		26FF217DA3670FA87C3FE290 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5354AD212BD3F6BAC86D0BA6 /* MBIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBIApp.swift; sourceTree = "<group>"; };
 		8A0DA5E7230CCFF24EFFDC75 /* AdminView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminView.swift; sourceTree = "<group>"; };
@@ -42,6 +45,16 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		1ED358342F9692EB00AFCF44 /* Fonts 2 */ = {
+			isa = PBXGroup;
+			children = (
+				1ED358312F9692EB00AFCF44 /* CormorantGaramond-Italic-VariableFont_wght.ttf */,
+				1ED358322F9692EB00AFCF44 /* CormorantGaramond-VariableFont_wght.ttf */,
+				1ED358332F9692EB00AFCF44 /* Jost-VariableFont_wght.ttf */,
+			);
+			path = "Fonts 2";
+			sourceTree = "<group>";
+		};
 		2DC65757FBDA67E02448D575 /* Services */ = {
 			isa = PBXGroup;
 			children = (
@@ -63,6 +76,7 @@
 				CD736EB2169857EC19705920 /* Models */,
 				2DC65757FBDA67E02448D575 /* Services */,
 				A07617DC5796300C526E4E79 /* Views */,
+				1ED358342F9692EB00AFCF44 /* Fonts 2 */,
 			);
 			path = MBI;
 			sourceTree = "<group>";
