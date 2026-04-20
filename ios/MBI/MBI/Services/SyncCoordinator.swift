@@ -75,10 +75,14 @@ class SyncCoordinator: ObservableObject {
     // ─────────────────────────────────────────
 
     func runBaselineBootstrap(userId: String, onProgress: @escaping (Int, Int) -> Void) async throws {
-        syncState = .syncing("Reading 7 days of history...")
+        syncState = .syncing("Reading your Apple Health history...")
 
-        let history = try await healthKit.readSevenDayHistory()
-        let total = history.count
+        // Read full available history, up to 90 days
+        let history = try await healthKit.readFullHistory(maxDays: 90)
+        let total = max(history.count, 1)
+
+        // Signal the total to the UI immediately so progress bar renders correctly
+        onProgress(0, total)
 
         for (i, day) in history.enumerated() {
             onProgress(i + 1, total)

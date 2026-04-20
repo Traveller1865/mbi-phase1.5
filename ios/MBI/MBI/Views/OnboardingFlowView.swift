@@ -184,10 +184,16 @@ struct OnboardingBootstrapView: View {
     let onComplete: () -> Void
 
     @State private var progress = 0
-    @State private var total = 7
+    @State private var total = 0
     @State private var isStarted = false
     @State private var error: String?
     @State private var isDone = false
+
+    var progressLabel: String {
+        if total == 0 { return "Scanning your health history..." }
+        if progress == 0 { return "Found \(total) days of history. Starting sync..." }
+        return "Reading day \(progress) of \(total)..."
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -203,7 +209,7 @@ struct OnboardingBootstrapView: View {
                         .font(.system(size: 32, weight: .light))
                         .foregroundColor(.white)
 
-                    Text("Your baseline is ready. Your first Chronos Score will be waiting for you tomorrow.")
+                    Text("Your baseline is ready. Your Chronos score is waiting on your dashboard.")
                         .font(.system(size: 15))
                         .foregroundColor(.white.opacity(0.5))
                         .multilineTextAlignment(.center)
@@ -215,7 +221,7 @@ struct OnboardingBootstrapView: View {
                     Text("Building your baseline")
                         .font(.system(size: 32, weight: .light))
                         .foregroundColor(.white)
-                    Text("We're reading 7 days of your Apple Health history to personalize your scoring. This takes about 30 seconds.")
+                    Text("We're reading your full Apple Health history to personalize your scoring from day one — no waiting for data to accumulate.")
                         .font(.system(size: 15))
                         .foregroundColor(.white.opacity(0.5))
                         .lineSpacing(4)
@@ -226,13 +232,17 @@ struct OnboardingBootstrapView: View {
 
                 if isStarted {
                     VStack(spacing: 16) {
-                        ProgressView(value: Double(progress), total: Double(total))
-                            .tint(.white)
-                            .padding(.horizontal, 32)
+                        ProgressView(
+                            value: total > 0 ? Double(progress) : 0,
+                            total: total > 0 ? Double(total) : 1
+                        )
+                        .tint(.white)
+                        .padding(.horizontal, 32)
 
-                        Text("Reading day \(progress) of \(total)...")
+                        Text(progressLabel)
                             .font(.system(size: 14))
                             .foregroundColor(.white.opacity(0.5))
+                            .animation(.easeInOut, value: progress)
                     }
                 }
 
@@ -252,7 +262,7 @@ struct OnboardingBootstrapView: View {
                     Task {
                         if let userId = supabase.session?.userId {
                             try? await supabase.markOnboardingComplete(userId: userId)
-                            try? await supabase.loadCurrentUser(userId: userId)
+                            _=try? await supabase.loadCurrentUser(userId: userId)
                         }
                         onComplete()
                     }
@@ -265,7 +275,9 @@ struct OnboardingBootstrapView: View {
                     Task {
                         guard let userId = supabase.session?.userId else { return }
                         do {
-                            try await SyncCoordinator.shared.runBaselineBootstrap(userId: userId) { done, total in
+                            try await SyncCoordinator.shared.runBaselineBootstrap(
+                                userId: userId
+                            ) { done, total in
                                 Task { @MainActor in
                                     self.progress = done
                                     self.total = total

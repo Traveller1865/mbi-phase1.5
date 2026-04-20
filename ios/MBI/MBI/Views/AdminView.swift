@@ -1,6 +1,5 @@
-// ios/MBI/Views/AdminView.swift
-// MBI Phase 1 — Admin View
-// All users' scores and trends. No PII exposed. Role-gated server-side.
+// ios/MBI/MBI/Views/AdminView.swift
+// MBI Phase 1.5 — Admin View
 
 import SwiftUI
 
@@ -27,15 +26,21 @@ struct AdminScoreRow: Identifiable {
 
 struct AdminView: View {
     @EnvironmentObject var supabase: SupabaseService
+    @EnvironmentObject var sync: SyncCoordinator
     @State private var users: [AdminUserSummary] = []
     @State private var isLoading = false
     @State private var error: String?
+    @State private var isResyncing = false
+    @State private var resyncProgress = 0
+    @State private var resyncTotal = 0
+    @State private var resyncDone = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             VStack(spacing: 0) {
+                // ── Header ──
                 HStack {
                     Text("Admin")
                         .font(.system(size: 22, weight: .light))
@@ -48,8 +53,62 @@ struct AdminView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 20)
+                .padding(.bottom, 16)
+
+                // ── Re-sync History Card ──
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Full History Sync")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white)
+                            Text("Read all available HealthKit history and score each day.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white.opacity(0.4))
+                                .lineSpacing(3)
+                        }
+                        Spacer()
+                        if resyncDone {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green.opacity(0.7))
+                                .font(.system(size: 20))
+                        }
+                    }
+
+                    if isResyncing {
+                        VStack(spacing: 8) {
+                            ProgressView(
+                                value: resyncTotal > 0 ? Double(resyncProgress) : 0,
+                                total: resyncTotal > 0 ? Double(resyncTotal) : 1
+                            )
+                            .tint(.white)
+
+                            Text(resyncTotal == 0
+                                 ? "Scanning history..."
+                                 : "Processing day \(resyncProgress) of \(resyncTotal)...")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.4))
+                        }
+                    } else {
+                        Button(action: runResync) {
+                            HStack {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text(resyncDone ? "Sync Again" : "Start Full Sync")
+                            }
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+                        }
+                    }
+                }
+                .padding(16)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.05)))
+                .padding(.horizontal, 20)
                 .padding(.bottom, 20)
 
+                // ── Users ──
                 if isLoading {
                     Spacer()
                     ProgressView().tint(.white.opacity(0.5))
@@ -91,9 +150,36 @@ struct AdminView: View {
                 let raw = try await supabase.fetchAdminData()
                 users = raw.compactMap { parseUser($0) }
             } catch {
-                self.error = "Admin data unavailable. Ensure your account has admin privileges."
+                self.error = "Admin data unavailable."
             }
             isLoading = false
+        }
+    }
+
+    private func runResync() {
+        guard let userId = supabase.session?.userId else { return }
+        isResyncing = true
+        resyncProgress = 0
+        resyncTotal = 0
+        resyncDone = false
+
+        Task {
+            do {
+                try await SyncCoordinator.shared.runBaselineBootstrap(
+                    userId: userId
+                ) { done, total in
+                    Task { @MainActor in
+                        self.resyncProgress = done
+                        self.resyncTotal = total
+                    }
+                }
+                resyncDone = true
+                // Reload admin data and dashboard after sync
+                load()
+            } catch {
+                self.error = "Sync failed: \(error.localizedDescription)"
+            }
+            isResyncing = false
         }
     }
 
@@ -126,44 +212,40 @@ struct AdminUserCard: View {
 
     var bandColor: Color {
         switch user.latestBand {
-        case "Thriving": return Color(red: 0.3, green: 0.85, blue: 0.5)
-        case "Recovering": return Color(red: 0.4, green: 0.7, blue: 1.0)
-        case "Drifting": return Color(red: 1.0, green: 0.75, blue: 0.2)
-        case "Redline": return Color(red: 1.0, green: 0.35, blue: 0.35)
+        case "Thriving":  return Color(red: 0.3, green: 0.85, blue: 0.5)
+        case "Recovering": return Color(red: 0.4, green: 0.7,  blue: 1.0)
+        case "Drifting":  return Color(red: 1.0, green: 0.75, blue: 0.2)
+        case "Redline":   return Color(red: 1.0, green: 0.35, blue: 0.35)
         default: return .white.opacity(0.4)
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
+            }) {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(user.displayName)
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.white)
-
                         if let band = user.latestBand {
                             Text(band)
                                 .font(.system(size: 12))
                                 .foregroundColor(bandColor)
                         }
                     }
-
                     Spacer()
-
-                    // Mini sparkline
                     if user.trend.count > 1 {
                         MiniSparkline(scores: user.trend)
                             .frame(width: 60, height: 24)
                     }
-
                     if let score = user.latestScore {
                         Text("\(Int(score))")
                             .font(.system(size: 24, weight: .light))
                             .foregroundColor(bandColor)
                     }
-
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.25))
@@ -177,7 +259,10 @@ struct AdminUserCard: View {
                     ForEach(user.scores.prefix(7)) { row in
                         AdminScoreRowView(row: row)
                         if row.id != user.scores.prefix(7).last?.id {
-                            Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1).padding(.horizontal, 16)
+                            Rectangle()
+                                .fill(Color.white.opacity(0.05))
+                                .frame(height: 1)
+                                .padding(.horizontal, 16)
                         }
                     }
                 }
@@ -195,9 +280,7 @@ struct AdminScoreRowView: View {
             Text(row.date)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(.white.opacity(0.4))
-
             Spacer()
-
             if let fail = row.failState {
                 Text(fail)
                     .font(.system(size: 11, weight: .medium))
@@ -206,11 +289,17 @@ struct AdminScoreRowView: View {
                     .padding(.vertical, 3)
                     .background(Capsule().fill(Color.orange.opacity(0.15)))
             }
-
+            if row.isProvisional {
+                Text("provisional")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.25))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.white.opacity(0.06)))
+            }
             Text("\(row.driver1) · \(row.driver2)")
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.35))
-
             Text("\(Int(row.chronosScore))")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(.white)
@@ -230,7 +319,6 @@ struct MiniSparkline: View {
             let max = (scores.max() ?? 100) + 5
             let range = max - min
             let step = size.width / CGFloat(scores.count - 1)
-
             var path = Path()
             for (i, score) in scores.enumerated() {
                 let x = CGFloat(i) * step
