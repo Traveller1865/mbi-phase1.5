@@ -41,18 +41,23 @@ serve(async (req) => {
       });
     }
 
-    // ── 2. Fetch last 7 days of inputs for baseline ───────────────────
+    // ── 2. Fetch up to 90 days of history ────────────────────────────
+    // historyDays drives D4 (≥7) and D5 (≥30) eligibility in scoring.ts.
+    // computeBaseline uses only the most recent 7 rows for rolling average.
     const { data: history } = await supabase
       .from("daily_inputs")
       .select("*")
       .eq("user_id", userId)
       .lt("date", date)
       .order("date", { ascending: true })
-      .limit(7);
+      .limit(90);
 
     const historyRows = history ?? [];
-    const baseline = computeBaseline(historyRows);
     const historyDays = historyRows.length;
+
+    // Baseline computed from most recent 7 days only (rolling window)
+    const baselineRows = historyRows.slice(-7);
+    const baseline = computeBaseline(baselineRows);
 
     // ── 3. Fetch user step goal ───────────────────────────────────────
     const { data: user } = await supabase
@@ -66,7 +71,7 @@ serve(async (req) => {
     // ── 4. Fetch recent scores for delta override & fail state ────────
     const { data: recentScoreRows } = await supabase
       .from("daily_scores")
-      .select("chronos_score")
+      .select("chronos_score, date")
       .eq("user_id", userId)
       .lt("date", date)
       .order("date", { ascending: false })

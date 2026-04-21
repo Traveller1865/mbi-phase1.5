@@ -180,17 +180,32 @@ class SupabaseService: ObservableObject {
 
         return DashboardData(score: score, explanation: explanation, recentScores: recentScores)
     }
+    
+    func fetchTrendData(userId: String) async throws -> [TrendPoint] {
+        let url = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&select=chronos_score,date&order=date.desc&limit=7")!
+        let data = try await getRequest(url: url)
+        let rows = (data as? [[String: Any]]) ?? []
+        return rows.compactMap { row -> TrendPoint? in
+            guard let date = row["date"] as? String,
+                  let score = row["chronos_score"] as? Double else { return nil }
+            return TrendPoint(date: date, score: score)
+        }.reversed()
+    }
 
     func triggerDailySync(userId: String, payload: [String: Any]) async throws {
         // Extract the date from the payload so score/narrate use the same date as ingest
         guard let payloadDate = (payload["metrics"] as? [String: Any]).flatMap({ _ in payload["date"] as? String })
-                ?? (payload["date"] as? String) else {
+                    ?? (payload["date"] as? String) else {
             throw MBIError.syncFailed("Payload missing date")
         }
-        
+
         _ = try await callEdgeFunction(url: Config.ingestURL, body: ["payload": payload])
         _ = try await callEdgeFunction(url: Config.scoreURL, body: ["userId": userId, "date": payloadDate])
-        _ = try await callEdgeFunction(url: Config.narrateURL, body: ["userId": userId, "date": payloadDate])
+        _ = try await callEdgeFunction(url: Config.narrateURL, body: [
+            "userId": userId,
+            "date": payloadDate,
+            "timeOfDay": TimeOfDay.current.rawValue   // E-09: morning | daytime | evening
+        ])
     }
 
     // MARK: - Feedback
@@ -323,10 +338,10 @@ extension SupabaseService {
     private static let keychainService = "com.mbi.chronos"
     private static let keychainAccount = "mbi_session"
     private static let udKey = "mbi_session_v2"
-
+    
     func saveSession(_ session: AuthSession) {
         guard let data = try? JSONEncoder().encode(session) else { return }
-
+        
         // Try Keychain
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
@@ -338,15 +353,15 @@ extension SupabaseService {
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         let status = SecItemAdd(attributes as CFDictionary, nil)
-
+        
         if status != errSecSuccess {
             print("[MBI] Keychain write failed (\(status)), using UserDefaults fallback")
         }
-
+        
         // Always write UserDefaults as fallback
         UserDefaults.standard.set(data, forKey: Self.udKey)
     }
-
+    
     @discardableResult
     func loadSavedSession() -> AuthSession? {
         // Try Keychain first
@@ -359,25 +374,25 @@ extension SupabaseService {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-
+        
         if status == errSecSuccess,
            let data = result as? Data,
            let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
             print("[MBI] Session loaded from Keychain")
             return session
         }
-
+        
         // Fall back to UserDefaults
         if let data = UserDefaults.standard.data(forKey: Self.udKey),
            let session = try? JSONDecoder().decode(AuthSession.self, from: data) {
             print("[MBI] Session loaded from UserDefaults fallback")
             return session
         }
-
+        
         print("[MBI] No stored session found")
         return nil
     }
-
+    
     func clearSavedSession() {
         let query: [String: Any] = [
             kSecClass as String:       kSecClassGenericPassword,
@@ -388,5 +403,22 @@ extension SupabaseService {
         UserDefaults.standard.removeObject(forKey: Self.udKey)
         self.session = nil
         self.currentUser = nil
+    }
+    
+    // MARK: - Baselines (for Trend deviation callouts — R-02)
+    
+    func fetchLatestBaselines(userId: String) async throws -> [String: Double] {
+        let url = URL(string: "\(Config.supabaseURL)/rest/v1/baselines?user_id=eq.\(userId)&order=computed_at.desc&limit=1&select=*")!
+        let data = try await getRequest(url: url)
+        guard let rows = data as? [[String: Any]], let row = rows.first else { return [:] }
+        
+        // Extract all metric baseline keys — any Double value not a metadata field
+        let skip = Set(["id", "user_id", "computed_at", "days_used", "created_at"])
+        var result: [String: Double] = [:]
+        for (key, val) in row {
+            guard !skip.contains(key), let v = val as? Double else { continue }
+            result[key] = v
+        }
+        return result
     }
 }

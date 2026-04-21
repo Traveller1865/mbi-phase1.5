@@ -20,6 +20,7 @@ class SyncCoordinator: ObservableObject {
     @Published var syncState: SyncState = .idle
     @Published var dashboard: DashboardData?
     @Published var lastSyncDate: Date?
+    @Published var trendData: [TrendPoint] = []
 
     private let healthKit = HealthKitManager.shared
     private let supabase = SupabaseService.shared
@@ -47,6 +48,7 @@ class SyncCoordinator: ObservableObject {
 
             // 2. Send to ingest → score → narrate pipeline
             let payload = metrics.toPayloadDict(userId: userId)
+            let timeOfDay = TimeOfDay.current.rawValue   // "morning" | "daytime" | "evening"
             try await supabase.triggerDailySync(userId: userId, payload: payload)
 
             // 3. Load dashboard
@@ -119,6 +121,15 @@ class SyncCoordinator: ObservableObject {
             }
         } catch {
             print("[loadDashboard] \(error)")
+        }
+    }
+    
+    func loadTrendData(userId: String) async {
+        do {
+            let points = try await supabase.fetchTrendData(userId: userId)
+            trendData = points
+        } catch {
+            print("[loadTrendData] \(error)")
         }
     }
 

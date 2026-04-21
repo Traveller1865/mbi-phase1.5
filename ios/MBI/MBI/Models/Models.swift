@@ -133,6 +133,15 @@ struct DashboardData {
 }
 
 // ─────────────────────────────────────────
+// TREND POINT
+// ─────────────────────────────────────────
+struct TrendPoint: Identifiable {
+    var id: String { date }
+    let date: String      // "yyyy-MM-dd"
+    let score: Double
+}
+
+// ─────────────────────────────────────────
 // METRIC LABELS (for UI display)
 // ─────────────────────────────────────────
 enum Metric: String {

@@ -1,89 +1,93 @@
-// ios/MBI/Views/DomainBreakdownView.swift
-// MBI Phase 1 — Domain Breakdown Screen
-// D1–D3 active from Day 1. D4 after 7 days. D5 after 30 days.
+// ios/MBI/MBI/Views/DomainBreakdownView.swift
+// MBI Phase 1.5 — Domain Breakdown · E-04
 
 import SwiftUI
+
+// ─────────────────────────────────────────
+// DOMAIN BREAKDOWN VIEW
+// ─────────────────────────────────────────
 
 struct DomainBreakdownView: View {
     @EnvironmentObject var sync: SyncCoordinator
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            ChronosTheme.ink.ignoresSafeArea()
 
-            ScrollView {
+            RadialGradient(
+                colors: [ChronosTheme.gold.opacity(0.04), .clear],
+                center: .top,
+                startRadius: 0,
+                endRadius: 300
+            )
+            .ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
-                    Text("Domain Breakdown")
-                        .font(.system(size: 22, weight: .light))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 20)
-                        .padding(.bottom, 8)
 
-                    Text("How your body is performing across each system")
-                        .font(.system(size: 14))
-                        .foregroundColor(.white.opacity(0.4))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.bottom, 28)
+                    // ── Header ──
+                    DomainsHeader()
 
                     if let score = sync.dashboard?.score {
-                        VStack(spacing: 14) {
-                            DomainCard(
-                                title: "Autonomic Recovery",
+                        VStack(spacing: 10) {
+
+                            ChronosDomainCard(
                                 label: "D1",
-                                subtitle: "HRV + Resting Heart Rate",
+                                title: "Autonomic Recovery",
+                                subtitle: "HRV · Resting HR",
                                 score: score.d1Autonomic,
+                                previousScore: nil,
                                 isActive: true,
-                                description: "Reflects your autonomic nervous system balance — the foundational signal for how recovered and adaptable your body is."
+                                description: "Reflects your autonomic nervous system balance — the foundational signal for how recovered and adaptable your body is today."
                             )
 
-                            DomainCard(
-                                title: "Sleep Recovery",
+                            ChronosDomainCard(
                                 label: "D2",
-                                subtitle: "Sleep Duration + Sleep Quality",
+                                title: "Sleep Recovery",
+                                subtitle: "Duration · Quality",
                                 score: score.d2Sleep,
+                                previousScore: nil,
                                 isActive: true,
-                                description: "Measures how much recovery work happened overnight — both the hours in bed and the quality of that sleep."
+                                description: "Measures how much recovery work happened overnight — both hours in bed and the quality of that sleep relative to your baseline."
                             )
 
-                            DomainCard(
-                                title: "Activity Load",
+                            ChronosDomainCard(
                                 label: "D3",
-                                subtitle: "Steps + Active Minutes + Distance",
+                                title: "Activity Load",
+                                subtitle: "Steps · Active min",
                                 score: score.d3Activity,
+                                previousScore: nil,
                                 isActive: true,
-                                description: "How much physical work your body handled today relative to your personal baseline."
+                                description: "How much physical work your body handled today relative to your personal movement baseline."
                             )
 
-                            DomainCard(
-                                title: "Inferred Stress",
+                            ChronosDomainCard(
                                 label: "D4",
-                                subtitle: "7-day HRV + RHR + Sleep trend",
+                                title: "Inferred Stress",
+                                subtitle: "7-day pattern",
                                 score: score.d4Stress,
+                                previousScore: nil,
                                 isActive: score.d4Stress != nil,
                                 description: "Detects accumulating physiological stress patterns over the past week before they compound.",
                                 pendingMessage: "Active after 7 days of history"
                             )
 
-                            DomainCard(
-                                title: "Allostatic Trend",
+                            ChronosDomainCard(
                                 label: "D5",
-                                subtitle: "30-day rolling composite",
+                                title: "Allostatic Trend",
+                                subtitle: "30-day composite",
                                 score: score.d5Allostatic,
+                                previousScore: nil,
                                 isActive: score.d5Allostatic != nil,
-                                description: "The long-range view — where your body is heading across the past month.",
+                                description: "The long-range view — where your body is heading across the past month. The prevention intelligence layer.",
                                 pendingMessage: "Active after 30 days of history"
                             )
                         }
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 40)
+                        .padding(.bottom, 48)
 
                     } else {
-                        Text("No data yet. Sync to see your domain scores.")
-                            .font(.system(size: 15))
-                            .foregroundColor(.white.opacity(0.4))
+                        DomainsEmptyView()
                             .padding(.top, 60)
                     }
                 }
@@ -92,131 +96,286 @@ struct DomainBreakdownView: View {
     }
 }
 
-struct DomainCard: View {
-    let title: String
+// ─────────────────────────────────────────
+// HEADER
+// ─────────────────────────────────────────
+
+struct DomainsHeader: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("FIVE SYSTEMS")
+                .font(.jost(size: 10, weight: .light))
+                .foregroundColor(ChronosTheme.gold)
+                .tracking(3)
+
+            Text("One picture.")
+                .font(.cormorant(size: 32, weight: .light))
+                .foregroundColor(ChronosTheme.text)
+
+            Text("How each system performed today relative to your baseline.")
+                .font(.jost(size: 13, weight: .light))
+                .foregroundColor(ChronosTheme.muted)
+                .lineSpacing(4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 24)
+    }
+}
+
+// ─────────────────────────────────────────
+// DOMAIN CARD
+// ─────────────────────────────────────────
+
+struct ChronosDomainCard: View {
     let label: String
+    let title: String
     let subtitle: String
     let score: Double?
+    let previousScore: Double?   // reserved for delta — wired in follow-up
     let isActive: Bool
     let description: String
     var pendingMessage: String? = nil
 
     @State private var isExpanded = false
 
+    // Score drives bar and number color
     var scoreColor: Color {
-        guard let s = score else { return .white.opacity(0.3) }
-        if s >= 80 { return Color(red: 0.3, green: 0.85, blue: 0.5) }
-        if s >= 60 { return Color(red: 0.4, green: 0.7, blue: 1.0) }
-        if s >= 40 { return Color(red: 1.0, green: 0.75, blue: 0.2) }
-        return Color(red: 1.0, green: 0.35, blue: 0.35)
+        guard let s = score else { return ChronosTheme.faint }
+        if s >= 80 { return Color(red: 0.40, green: 0.82, blue: 0.50) }
+        if s >= 60 { return ChronosTheme.goldLight }
+        if s >= 40 { return Color(red: 1.0, green: 0.78, blue: 0.28) }
+        return Color(red: 1.0, green: 0.40, blue: 0.40)
+    }
+
+    // Low score = muted red bar fill
+    var barColor: LinearGradient {
+        guard let s = score else {
+            return LinearGradient(colors: [ChronosTheme.faint], startPoint: .leading, endPoint: .trailing)
+        }
+        if s < 50 {
+            return LinearGradient(
+                colors: [Color(red: 0.65, green: 0.25, blue: 0.25), Color(red: 0.78, green: 0.35, blue: 0.35)],
+                startPoint: .leading, endPoint: .trailing
+            )
+        }
+        return LinearGradient(
+            colors: [ChronosTheme.gold.opacity(0.7), ChronosTheme.goldLight],
+            startPoint: .leading, endPoint: .trailing
+        )
+    }
+
+    var deltaText: String? {
+        guard let s = score, let prev = previousScore else { return nil }
+        let diff = Int(s) - Int(prev)
+        if diff == 0 { return nil }
+        return diff > 0 ? "↑ \(abs(diff))" : "↓ \(abs(diff))"
+    }
+
+    var deltaColor: Color {
+        guard let s = score, let prev = previousScore else { return ChronosTheme.muted }
+        return s >= prev
+            ? Color(red: 0.40, green: 0.82, blue: 0.50)
+            : Color(red: 1.0, green: 0.50, blue: 0.50)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
-                HStack(spacing: 16) {
-                    // Label badge
-                    Text(label)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(isActive ? scoreColor : .white.opacity(0.25))
-                        .frame(width: 32, height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(isActive ? scoreColor.opacity(0.12) : Color.white.opacity(0.05))
+        ZStack(alignment: .top) {
+            // Card background
+            RoundedRectangle(cornerRadius: 16)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.098, green: 0.098, blue: 0.157),
+                            Color(red: 0.071, green: 0.071, blue: 0.118)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(
+                            isActive
+                                ? ChronosTheme.gold.opacity(0.18)
+                                : ChronosTheme.border,
+                            lineWidth: 1
                         )
+                )
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(isActive ? .white : .white.opacity(0.35))
-                        Text(subtitle)
-                            .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.35))
-                    }
-
+            // Gold top border (active only)
+            if isActive {
+                VStack {
+                    Rectangle()
+                        .fill(
+                            LinearGradient(
+                                colors: [.clear, ChronosTheme.gold.opacity(0.5), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(height: 1)
+                        .clipShape(.rect(topLeadingRadius: 16, topTrailingRadius: 16))
                     Spacer()
-
-                    if let s = score {
-                        Text("\(Int(s))")
-                            .font(.system(size: 22, weight: .light))
-                            .foregroundColor(scoreColor)
-                    } else if let pending = pendingMessage {
-                        Text("—")
-                            .font(.system(size: 18, weight: .light))
-                            .foregroundColor(.white.opacity(0.2))
-                    }
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.25))
                 }
-                .padding(16)
             }
 
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.06))
-                        .frame(height: 1)
-                        .padding(.horizontal, 16)
-
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(.white.opacity(0.5))
-                        .lineSpacing(4)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 4)
-
-                    if let pending = pendingMessage, score == nil {
-                        HStack(spacing: 6) {
-                            Image(systemName: "clock")
-                                .font(.system(size: 11))
-                            Text(pending)
-                                .font(.system(size: 12))
-                        }
-                        .foregroundColor(.white.opacity(0.3))
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 14)
+            VStack(spacing: 0) {
+                // ── Header row (tappable) ──
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isExpanded.toggle()
                     }
+                }) {
+                    HStack(spacing: 12) {
 
-                    if let s = score {
-                        DomainScoreBar(score: s, color: scoreColor)
+                        // Badge
+                        Text(label)
+                            .font(.jost(size: 9, weight: isActive ? .medium : .light))
+                            .foregroundColor(isActive ? ChronosTheme.gold : ChronosTheme.faint)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(
+                                        isActive
+                                            ? ChronosTheme.goldDim
+                                            : ChronosTheme.ink
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(
+                                                isActive
+                                                    ? ChronosTheme.gold.opacity(0.2)
+                                                    : ChronosTheme.border,
+                                                lineWidth: 1
+                                            )
+                                    )
+                            )
+
+                        // Title + subtitle
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.jost(size: 13, weight: .regular))
+                                .foregroundColor(isActive ? ChronosTheme.text : ChronosTheme.muted)
+                            Text(subtitle)
+                                .font(.jost(size: 10, weight: .light))
+                                .foregroundColor(ChronosTheme.faint)
+                        }
+
+                        Spacer()
+
+                        // Score + delta
+                        if let s = score {
+                            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                if let delta = deltaText {
+                                    Text(delta)
+                                        .font(.jost(size: 10, weight: .light))
+                                        .foregroundColor(deltaColor)
+                                }
+                                Text("\(Int(s))")
+                                    .font(.cormorant(size: 22, weight: .light))
+                                    .foregroundColor(scoreColor)
+                            }
+                        }
+
+                        // Chevron
+                        if isActive {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10, weight: .light))
+                                .foregroundColor(ChronosTheme.faint)
+                                .padding(.leading, 4)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                }
+                .disabled(!isActive)
+
+                // ── Bar track (always visible when active, score available) ──
+                if isActive, let s = score {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            // Track
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(ChronosTheme.faint.opacity(0.4))
+                                .frame(height: 3)
+
+                            // Fill
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(barColor)
+                                .frame(width: geo.size.width * CGFloat(s / 100), height: 3)
+                        }
+                    }
+                    .frame(height: 3)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, isExpanded ? 0 : 14)
+                }
+
+                // ── Pending lock row ──
+                if !isActive, let msg = pendingMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock")
+                            .font(.system(size: 9, weight: .light))
+                            .foregroundColor(ChronosTheme.faint)
+                        Text(msg.uppercased())
+                            .font(.jost(size: 8, weight: .light))
+                            .foregroundColor(ChronosTheme.faint)
+                            .tracking(1.5)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 14)
+                }
+
+                // ── Expanded description ──
+                if isExpanded && isActive {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Rectangle()
+                            .fill(ChronosTheme.gold.opacity(0.12))
+                            .frame(height: 1)
                             .padding(.horizontal, 16)
+                            .padding(.top, 12)
+
+                        Text(description)
+                            .font(.jost(size: 12, weight: .light))
+                            .foregroundColor(ChronosTheme.muted)
+                            .lineSpacing(5)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
                             .padding(.bottom, 16)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.05)))
+        // D5 pending — full card dimmed
+        .opacity(label == "D5" && !isActive ? 0.35 : 1.0)
+        // D4 pending — slightly dimmed
+        .opacity(label == "D4" && !isActive ? 0.60 : 1.0)
     }
 }
 
-struct DomainScoreBar: View {
-    let score: Double
-    let color: Color
+// ─────────────────────────────────────────
+// EMPTY STATE
+// ─────────────────────────────────────────
 
+struct DomainsEmptyView: View {
     var body: some View {
-        VStack(spacing: 6) {
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.white.opacity(0.08))
-                        .frame(height: 6)
+        VStack(spacing: 20) {
+            ChronosLogoMark()
+                .frame(width: 52, height: 52)
+                .opacity(0.25)
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(color)
-                        .frame(width: geo.size.width * CGFloat(score / 100), height: 6)
-                }
-            }
-            .frame(height: 6)
+            Text("No domain data yet")
+                .font(.cormorant(size: 24))
+                .foregroundColor(ChronosTheme.muted)
 
-            HStack {
-                Text("0")
-                Spacer()
-                Text("100")
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.white.opacity(0.2))
+            Text("Sync your Apple Watch data to\nsee how each system is performing.")
+                .font(.jost(size: 13, weight: .light))
+                .foregroundColor(ChronosTheme.faint)
+                .multilineTextAlignment(.center)
+                .lineSpacing(5)
+                .padding(.horizontal, 48)
         }
     }
 }

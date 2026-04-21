@@ -1,7 +1,7 @@
 // backend/supabase/functions/narrate/index.ts
 // MBI Phase 1 — Narrative Layer Edge Function
 // Sprint 5 | Claude explains. Claude does not decide.
-// Prompt Version: 1.0
+// Prompt Version: 1.1  ← bumped for timeOfDay fork (E-09)
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -11,7 +11,7 @@ const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY")!;
 
 const MODEL = "claude-sonnet-4-5";
-const PROMPT_VERSION = "1.0";
+const PROMPT_VERSION = "1.1";
 
 // ─────────────────────────────────────────
 // METRIC DISPLAY NAMES
@@ -34,6 +34,21 @@ const DOMAIN_LABELS: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────
+// TIME OF DAY CONTEXT
+// Mirrors the Swift TimeOfDay enum boundaries exactly.
+// morning  → hour < 12
+// daytime  → hour 12–16
+// evening  → hour ≥ 17
+// ─────────────────────────────────────────
+type TimeOfDay = "morning" | "daytime" | "evening";
+
+const TIME_OF_DAY_CONTEXT: Record<TimeOfDay, string> = {
+  morning: "The user is reading this in the morning. They are planning their day. The nudge should be actionable today — something they can do in the next few hours.",
+  daytime: "The user is reading this in the afternoon. Their day is already underway. The nudge should be relevant to the remainder of today — something still achievable.",
+  evening: "The user is reading this in the evening. Their active day is winding down. The nudge should target recovery — sleep preparation, stress reduction, or rest.",
+};
+
+// ─────────────────────────────────────────
 // PROMPT BUILDER
 // Voice & tone rules enforced here (SoT §5.3, PRD §5.3)
 // ─────────────────────────────────────────
@@ -47,6 +62,7 @@ function buildPrompt(input: {
   domain_scores: Record<string, number | null>;
   is_provisional: boolean;
   nudge_domain: string;
+  time_of_day: TimeOfDay;   // ← E-09
 }): string {
   const driver1Label = METRIC_LABELS[input.driver_1] ?? input.driver_1;
   const driver2Label = METRIC_LABELS[input.driver_2] ?? input.driver_2;
@@ -66,6 +82,9 @@ function buildPrompt(input: {
   const provisionalNote = input.is_provisional
     ? "NOTE: This score is provisional — the user is still building their baseline. Mention gently that the score will become more personalized over the next few days."
     : "";
+
+  // E-09: time-gated nudge framing
+  const timeContext = TIME_OF_DAY_CONTEXT[input.time_of_day];
 
   return `You are the voice of Mynd & Bodi Institute, a prevention-first health intelligence platform.
 
@@ -89,11 +108,13 @@ BAND CONTEXT: ${bandContext}
 ${deltaContext}
 ${provisionalNote}
 
+TIME OF DAY CONTEXT: ${timeContext}
+
 Generate exactly two outputs:
 
 EXPLANATION: 2–4 sentences. Reference both drivers by name (use the plain-language names above). Explain what the body is experiencing in wellness terms. If delta override is triggered, lead with the trend, not just today's state. Keep it warm, grounded, and specific to these two drivers.
 
-NUDGE: Exactly 1 sentence. A single, concrete, achievable action targeting ${nudgeLabel}. Never a list. Never more than one action.
+NUDGE: Exactly 1 sentence. A single, concrete, achievable action targeting ${nudgeLabel}. The nudge must be appropriate for when the user is actually reading this (see TIME OF DAY CONTEXT above). Never a list. Never more than one action.
 
 Respond in this exact JSON format:
 {
@@ -112,7 +133,12 @@ serve(async (req) => {
 
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    const { userId, date } = await req.json();
+
+    // E-09: timeOfDay added to payload. iOS client sends it; falls back to
+    // "morning" if omitted so existing callers don't break.
+    const { userId, date, timeOfDay } = await req.json();
+    const time_of_day: TimeOfDay =
+      timeOfDay === "daytime" || timeOfDay === "evening" ? timeOfDay : "morning";
 
     // ── Fetch the score for this day ──────────────────────────────────
     const { data: score, error: scoreErr } = await supabase
@@ -152,6 +178,7 @@ serve(async (req) => {
       },
       is_provisional: score.is_provisional,
       nudge_domain,
+      time_of_day,   // ← E-09
     };
 
     const prompt = buildPrompt(narrativeInput);
@@ -185,7 +212,6 @@ serve(async (req) => {
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       parsed = JSON.parse(jsonMatch?.[0] ?? rawText);
     } catch {
-      // Fallback: extract manually
       parsed = {
         explanation: "Your body is showing some changes today worth paying attention to.",
         nudge: "Take a moment to rest and recover today.",
