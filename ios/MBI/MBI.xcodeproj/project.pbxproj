@@ -13,6 +13,7 @@
 		1ED358382F96CB5700AFCF44 /* AccountView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED358372F96CB5100AFCF44 /* AccountView.swift */; };
 		1ED3583A2F96F93A00AFCF44 /* FailStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED358392F96F92900AFCF44 /* FailStateView.swift */; };
 		1ED3583C2F97BEB200AFCF44 /* HorizonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED3583B2F97BEAC00AFCF44 /* HorizonView.swift */; };
+		1ED3583E2F98106C00AFCF44 /* IntelligenceCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ED3583D2F98106800AFCF44 /* IntelligenceCardView.swift */; };
 		21C40F8F4D22927F58049E40 /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 962719D8A381E23E3E42AD66 /* SupabaseService.swift */; };
 		2B2E53CBCCBCC31264D74021 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 032E30C829996E3B937CD459 /* SyncCoordinator.swift */; };
 		2C9E0102D15E1CD93B4AD828 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13BA49ADAB52A97D0E4B724A /* FeedbackView.swift */; };
@@ -37,6 +38,7 @@
 		1ED358372F96CB5100AFCF44 /* AccountView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountView.swift; sourceTree = "<group>"; };
 		1ED358392F96F92900AFCF44 /* FailStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FailStateView.swift; sourceTree = "<group>"; };
 		1ED3583B2F97BEAC00AFCF44 /* HorizonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizonView.swift; sourceTree = "<group>"; };
+		1ED3583D2F98106800AFCF44 /* IntelligenceCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntelligenceCardView.swift; sourceTree = "<group>"; };
 		26FF217DA3670FA87C3FE290 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5354AD212BD3F6BAC86D0BA6 /* MBIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MBIApp.swift; sourceTree = "<group>"; };
 		8A0DA5E7230CCFF24EFFDC75 /* AdminView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminView.swift; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 		A07617DC5796300C526E4E79 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				1ED3583D2F98106800AFCF44 /* IntelligenceCardView.swift */,
 				1ED3583B2F97BEAC00AFCF44 /* HorizonView.swift */,
 				1ED358392F96F92900AFCF44 /* FailStateView.swift */,
 				1ED358372F96CB5100AFCF44 /* AccountView.swift */,
@@ -205,6 +208,7 @@
 				76BA2E8477CCA46343553678 /* DashboardView.swift in Sources */,
 				A0EAFDF06ED7A988181F73D7 /* DomainBreakdownView.swift in Sources */,
 				2C9E0102D15E1CD93B4AD828 /* FeedbackView.swift in Sources */,
+				1ED3583E2F98106C00AFCF44 /* IntelligenceCardView.swift in Sources */,
 				11A7FE0FBB82BE77BFB3EED7 /* HealthKitManager.swift in Sources */,
 				745CA91709CBBBEFCE9F4A9A /* MBIApp.swift in Sources */,
 				AE97A702ECB6A5FEA465E6B9 /* Models.swift in Sources */,

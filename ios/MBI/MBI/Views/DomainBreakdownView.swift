@@ -1,5 +1,6 @@
 // ios/MBI/MBI/Views/DomainBreakdownView.swift
-// MBI Phase 1.5 — Domain Breakdown · E-04
+// MBI Phase 1.5 — Domain Breakdown · E-11 update
+// Added: AllostaticPortraitCard renders below D5 when d5_allostatic is non-null
 
 import SwiftUI
 
@@ -9,6 +10,7 @@ import SwiftUI
 
 struct DomainBreakdownView: View {
     @EnvironmentObject var sync: SyncCoordinator
+    @EnvironmentObject var supabase: SupabaseService
 
     var body: some View {
         ZStack {
@@ -25,7 +27,6 @@ struct DomainBreakdownView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
 
-                    // ── Header ──
                     DomainsHeader()
 
                     if let score = sync.dashboard?.score {
@@ -82,6 +83,12 @@ struct DomainBreakdownView: View {
                                 description: "The long-range view — where your body is heading across the past month. The prevention intelligence layer.",
                                 pendingMessage: "Active after 30 days of history"
                             )
+
+                            // ── Allostatic Portrait (E-11) ──────────────
+                            // Renders only when D5 is active
+                            if score.d5Allostatic != nil {
+                                AllostaticPortraitCard()
+                            }
                         }
                         .padding(.horizontal, 20)
                         .padding(.bottom, 48)
@@ -133,14 +140,13 @@ struct ChronosDomainCard: View {
     let title: String
     let subtitle: String
     let score: Double?
-    let previousScore: Double?   // reserved for delta — wired in follow-up
+    let previousScore: Double?
     let isActive: Bool
     let description: String
     var pendingMessage: String? = nil
 
     @State private var isExpanded = false
 
-    // Score drives bar and number color
     var scoreColor: Color {
         guard let s = score else { return ChronosTheme.faint }
         if s >= 80 { return Color(red: 0.40, green: 0.82, blue: 0.50) }
@@ -149,7 +155,6 @@ struct ChronosDomainCard: View {
         return Color(red: 1.0, green: 0.40, blue: 0.40)
     }
 
-    // Low score = muted red bar fill
     var barColor: LinearGradient {
         guard let s = score else {
             return LinearGradient(colors: [ChronosTheme.faint], startPoint: .leading, endPoint: .trailing)
@@ -182,39 +187,24 @@ struct ChronosDomainCard: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Card background
             RoundedRectangle(cornerRadius: 16)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.098, green: 0.098, blue: 0.157),
-                            Color(red: 0.071, green: 0.071, blue: 0.118)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(
-                            isActive
-                                ? ChronosTheme.gold.opacity(0.18)
-                                : ChronosTheme.border,
-                            lineWidth: 1
-                        )
-                )
+                .fill(LinearGradient(
+                    colors: [
+                        Color(red: 0.098, green: 0.098, blue: 0.157),
+                        Color(red: 0.071, green: 0.071, blue: 0.118)
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .overlay(RoundedRectangle(cornerRadius: 16)
+                    .stroke(isActive ? ChronosTheme.gold.opacity(0.18) : ChronosTheme.border, lineWidth: 1))
 
-            // Gold top border (active only)
             if isActive {
                 VStack {
                     Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [.clear, ChronosTheme.gold.opacity(0.5), .clear],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                        .fill(LinearGradient(
+                            colors: [.clear, ChronosTheme.gold.opacity(0.5), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        ))
                         .frame(height: 1)
                         .clipShape(.rect(topLeadingRadius: 16, topTrailingRadius: 16))
                     Spacer()
@@ -222,38 +212,21 @@ struct ChronosDomainCard: View {
             }
 
             VStack(spacing: 0) {
-                // ── Header row (tappable) ──
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isExpanded.toggle()
-                    }
+                    withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() }
                 }) {
                     HStack(spacing: 12) {
-
-                        // Badge
                         Text(label)
                             .font(.jost(size: 9, weight: isActive ? .medium : .light))
                             .foregroundColor(isActive ? ChronosTheme.gold : ChronosTheme.faint)
                             .frame(width: 32, height: 32)
                             .background(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .fill(
-                                        isActive
-                                            ? ChronosTheme.goldDim
-                                            : ChronosTheme.ink
-                                    )
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(
-                                                isActive
-                                                    ? ChronosTheme.gold.opacity(0.2)
-                                                    : ChronosTheme.border,
-                                                lineWidth: 1
-                                            )
-                                    )
+                                    .fill(isActive ? ChronosTheme.goldDim : ChronosTheme.ink)
+                                    .overlay(RoundedRectangle(cornerRadius: 8)
+                                        .stroke(isActive ? ChronosTheme.gold.opacity(0.2) : ChronosTheme.border, lineWidth: 1))
                             )
 
-                        // Title + subtitle
                         VStack(alignment: .leading, spacing: 3) {
                             Text(title)
                                 .font(.jost(size: 13, weight: .regular))
@@ -265,7 +238,6 @@ struct ChronosDomainCard: View {
 
                         Spacer()
 
-                        // Score + delta
                         if let s = score {
                             HStack(alignment: .firstTextBaseline, spacing: 5) {
                                 if let delta = deltaText {
@@ -279,7 +251,6 @@ struct ChronosDomainCard: View {
                             }
                         }
 
-                        // Chevron
                         if isActive {
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 10, weight: .light))
@@ -292,16 +263,12 @@ struct ChronosDomainCard: View {
                 }
                 .disabled(!isActive)
 
-                // ── Bar track (always visible when active, score available) ──
                 if isActive, let s = score {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            // Track
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(ChronosTheme.faint.opacity(0.4))
                                 .frame(height: 3)
-
-                            // Fill
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(barColor)
                                 .frame(width: geo.size.width * CGFloat(s / 100), height: 3)
@@ -312,7 +279,6 @@ struct ChronosDomainCard: View {
                     .padding(.bottom, isExpanded ? 0 : 14)
                 }
 
-                // ── Pending lock row ──
                 if !isActive, let msg = pendingMessage {
                     HStack(spacing: 8) {
                         Image(systemName: "lock")
@@ -327,7 +293,6 @@ struct ChronosDomainCard: View {
                     .padding(.bottom, 14)
                 }
 
-                // ── Expanded description ──
                 if isExpanded && isActive {
                     VStack(alignment: .leading, spacing: 0) {
                         Rectangle()
@@ -348,10 +313,237 @@ struct ChronosDomainCard: View {
                 }
             }
         }
-        // D5 pending — full card dimmed
         .opacity(label == "D5" && !isActive ? 0.35 : 1.0)
-        // D4 pending — slightly dimmed
         .opacity(label == "D4" && !isActive ? 0.60 : 1.0)
+    }
+}
+
+// ─────────────────────────────────────────
+// ALLOSTATIC PORTRAIT CARD  (E-11)
+// 90-day D5 load curve. Renders only when D5 active.
+// Lower line = less cumulative stress = better.
+// ─────────────────────────────────────────
+
+struct AllostaticPortraitCard: View {
+    @EnvironmentObject var supabase: SupabaseService
+
+    @State private var history: [(date: String, value: Double)] = []
+    @State private var isLoading = true
+
+    // Trend derived from comparing first 7 vs last 7 points
+    var trend: String {
+        guard history.count >= 14 else { return "Building" }
+        let recent = history.suffix(7).map { $0.value }
+        let older  = history.prefix(7).map { $0.value }
+        let recentAvg = recent.reduce(0, +) / Double(recent.count)
+        let olderAvg  = older.reduce(0, +)  / Double(older.count)
+        let delta = recentAvg - olderAvg
+        if delta > 3  { return "Increasing" }   // load going up
+        if delta < -3 { return "Improving" }    // load going down
+        return "Stable"
+    }
+
+    var trendColor: Color {
+        switch trend {
+        case "Improving":  return Color(red: 0.40, green: 0.82, blue: 0.50)
+        case "Increasing": return Color(red: 1.0,  green: 0.55, blue: 0.45)
+        default:           return ChronosTheme.goldLight
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(LinearGradient(
+                    colors: [Color(red: 0.07, green: 0.07, blue: 0.13),
+                             Color(red: 0.05, green: 0.05, blue: 0.09)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(RoundedRectangle(cornerRadius: 16)
+                    .stroke(ChronosTheme.border, lineWidth: 1))
+
+            // Subtle gold top border
+            VStack {
+                Rectangle()
+                    .fill(LinearGradient(
+                        colors: [.clear, ChronosTheme.gold.opacity(0.30), .clear],
+                        startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 1)
+                    .clipShape(.rect(topLeadingRadius: 16, topTrailingRadius: 16))
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+
+                // ── Header ──
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("ALLOSTATIC PORTRAIT")
+                            .font(.jost(size: 9, weight: .light))
+                            .foregroundColor(ChronosTheme.gold)
+                            .tracking(2.5)
+                        Text("90-day cumulative load")
+                            .font(.cormorant(size: 18, weight: .light))
+                            .foregroundColor(ChronosTheme.text)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(trend.uppercased())
+                            .font(.jost(size: 9, weight: .medium))
+                            .foregroundColor(trendColor)
+                            .tracking(2)
+                        Text("load trend")
+                            .font(.jost(size: 8, weight: .light))
+                            .foregroundColor(ChronosTheme.faint)
+                    }
+                }
+
+                Rectangle().fill(ChronosTheme.gold.opacity(0.15)).frame(height: 1)
+
+                // ── Curve ──
+                if isLoading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .tint(ChronosTheme.gold.opacity(0.4))
+                        Text("Loading portrait...")
+                            .font(.jost(size: 12, weight: .light))
+                            .foregroundColor(ChronosTheme.faint)
+                    }
+                    .frame(height: 80)
+
+                } else if history.isEmpty {
+                    Text("Not enough history yet — check back in a few days.")
+                        .font(.jost(size: 12, weight: .light))
+                        .foregroundColor(ChronosTheme.faint)
+                        .lineSpacing(4)
+                        .frame(height: 80, alignment: .leading)
+
+                } else {
+                    AllostaticCurve(history: history)
+                        .frame(height: 80)
+                }
+
+                // ── Context note ──
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(ChronosTheme.gold.opacity(0.4))
+                        .frame(width: 4, height: 4)
+                        .padding(.top, 5)
+                    Text("Lower is better. A descending line means your body is carrying less cumulative stress over time.")
+                        .font(.jost(size: 11, weight: .light))
+                        .foregroundColor(ChronosTheme.faint)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(20)
+        }
+        .task {
+            guard let userId = supabase.session?.userId else {
+                isLoading = false
+                return
+            }
+            do {
+                history = try await supabase.fetchAllostaticHistory(userId: userId)
+            } catch {
+                print("[AllostaticPortrait] load failed: \(error)")
+            }
+            isLoading = false
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// ALLOSTATIC CURVE  — Canvas line chart
+// D5 score is physiological resilience (higher = better).
+// We invert visually so the portrait reads as a load curve:
+// high D5 score → low position on chart (low load).
+// ─────────────────────────────────────────
+
+struct AllostaticCurve: View {
+    let history: [(date: String, value: Double)]
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let values = history.map { $0.value }
+            let minV = (values.min() ?? 0) - 5
+            let maxV = (values.max() ?? 100) + 5
+            let range = maxV - minV
+            let step = w / CGFloat(max(values.count - 1, 1))
+
+            // Invert Y: high score (good) = bottom of chart (low load)
+            let points: [CGPoint] = values.enumerated().map { i, v in
+                CGPoint(
+                    x: CGFloat(i) * step,
+                    y: h - CGFloat((v - minV) / range) * h
+                )
+            }
+
+            ZStack {
+                // Fill under curve
+                Canvas { ctx, size in
+                    guard points.count > 1 else { return }
+                    var fill = Path()
+                    fill.move(to: CGPoint(x: points[0].x, y: size.height))
+                    fill.addLine(to: points[0])
+                    for pt in points.dropFirst() { fill.addLine(to: pt) }
+                    fill.addLine(to: CGPoint(x: points.last!.x, y: size.height))
+                    fill.closeSubpath()
+                    ctx.fill(fill, with: .linearGradient(
+                        Gradient(colors: [ChronosTheme.gold.opacity(0.10), .clear]),
+                        startPoint: CGPoint(x: 0, y: 0),
+                        endPoint: CGPoint(x: 0, y: size.height)
+                    ))
+                }
+
+                // Line
+                Canvas { ctx, size in
+                    guard points.count > 1 else { return }
+                    var path = Path()
+                    path.move(to: points[0])
+                    for pt in points.dropFirst() { path.addLine(to: pt) }
+                    ctx.stroke(path, with: .linearGradient(
+                        Gradient(colors: [ChronosTheme.gold.opacity(0.35), ChronosTheme.goldLight]),
+                        startPoint: CGPoint(x: 0, y: h / 2),
+                        endPoint: CGPoint(x: w, y: h / 2)
+                    ), lineWidth: 1.5)
+                }
+
+                // End dot
+                if let last = points.last {
+                    Circle()
+                        .fill(ChronosTheme.goldLight)
+                        .frame(width: 6, height: 6)
+                        .position(last)
+                }
+
+                // Date labels — first and last
+                if let first = history.first, let last = history.last {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Text(shortDate(first.date))
+                                .font(.jost(size: 8, weight: .light))
+                                .foregroundColor(ChronosTheme.faint)
+                            Spacer()
+                            Text(shortDate(last.date))
+                                .font(.jost(size: 8, weight: .light))
+                                .foregroundColor(ChronosTheme.faint)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func shortDate(_ dateString: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: dateString) else { return dateString }
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: date)
     }
 }
 

@@ -1,0 +1,8 @@
+
+# macOS metadata
+._*
+.DS_Store
+
+# Local secrets — never commit
+ios/MBI/MBI/Secrets.swift
+ios/MBI/MBI/Secre.swift

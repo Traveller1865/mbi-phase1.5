@@ -421,4 +421,32 @@ extension SupabaseService {
         }
         return result
     }
+    
+    // MARK: - Driver Streak (for contextual education trigger — E-11)
+
+        func fetchDriverStreak(userId: String, todayDriver: String) async throws -> Int {
+            let url = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&select=driver_1,date&order=date.desc&limit=10")!
+            let data = try await getRequest(url: url)
+            guard let rows = data as? [[String: Any]] else { return 0 }
+
+            var streak = 0
+            for row in rows {
+                guard let d1 = row["driver_1"] as? String else { break }
+                if d1 == todayDriver { streak += 1 } else { break }
+            }
+            return streak
+        }
+
+        // MARK: - D5 History (for Allostatic Portrait — E-11)
+
+        func fetchAllostaticHistory(userId: String) async throws -> [(date: String, value: Double)] {
+            let url = URL(string: "\(Config.supabaseURL)/rest/v1/daily_scores?user_id=eq.\(userId)&d5_allostatic=not.is.null&select=date,d5_allostatic&order=date.asc&limit=90")!
+            let data = try await getRequest(url: url)
+            guard let rows = data as? [[String: Any]] else { return [] }
+            return rows.compactMap { row in
+                guard let date = row["date"] as? String,
+                      let val = row["d5_allostatic"] as? Double else { return nil }
+                return (date: date, value: val)
+            }
+        }
 }

@@ -4,6 +4,7 @@ import Foundation
 enum Config {
     static let supabaseURL = "https://sjhysadnpswrcpmezmoc.supabase.co"
     static let supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNqaHlzYWRucHN3cmNwbWV6bW9jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYyNzA3MjMsImV4cCI6MjA5MTg0NjcyM30.hxIavIKdeekjEioc-pbP1FU9PCX2sJ7jQUPpeNSNIxU"
+    static let anthropicAPIKey = Secrets.anthropicAPIKey
 
     static var ingestURL: URL { URL(string: "\(supabaseURL)/functions/v1/ingest")! }
     static var scoreURL: URL { URL(string: "\(supabaseURL)/functions/v1/score")! }

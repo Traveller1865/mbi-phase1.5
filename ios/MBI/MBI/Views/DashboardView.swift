@@ -1,15 +1,14 @@
 // ios/MBI/MBI/Views/DashboardView.swift
-// MBI Phase 1.5 — Dashboard · Morning Brief · E-10 update
-// Changes: Account button relocated from MainTabView ZStack → MorningBriefHeader
-//          showAccount state + AccountView sheet moved to DashboardView
-//          MorningBriefHeader gains onAccountTap closure
-//          MainTabView ZStack overlay removed entirely
+// MBI Phase 1.5 — Dashboard · Morning Brief · E-11 revised
+// Driver chips are tappable — open IntelligenceSheet for that metric.
+// Content cached by metric key in intelligenceCache.
+// Cache clears when drivers change (next day's sync).
+// Streak trigger removed — intelligence is a resource, not a flag.
 
 import SwiftUI
 
 // ─────────────────────────────────────────
 // TIME OF DAY  — single source of truth
-// Used by: header greeting, letter label, narrate payload
 // ─────────────────────────────────────────
 
 enum TimeOfDay: String {
@@ -17,7 +16,6 @@ enum TimeOfDay: String {
     case daytime  = "daytime"
     case evening  = "evening"
 
-    /// Derived from the device clock at the moment of access.
     static var current: TimeOfDay {
         let hour = Calendar.current.component(.hour, from: Date())
         if hour < 12 { return .morning }
@@ -33,13 +31,11 @@ enum TimeOfDay: String {
         }
     }
 
-    /// Short label used in LetterCard header ("Chronos · Monday morning")
     var label: String { rawValue }
 }
 
 // ─────────────────────────────────────────
 // MAIN TAB
-// ZStack overlay removed — account button now lives in MorningBriefHeader
 // ─────────────────────────────────────────
 
 struct MainTabView: View {
@@ -87,7 +83,6 @@ struct MainTabView: View {
 
 // ─────────────────────────────────────────
 // DASHBOARD VIEW
-// showAccount + AccountView sheet now owned here
 // ─────────────────────────────────────────
 
 struct DashboardView: View {
@@ -95,6 +90,16 @@ struct DashboardView: View {
     @EnvironmentObject var supabase: SupabaseService
     @State private var showFeedback = false
     @State private var showAccount = false
+
+    // E-11: Intelligence cache — keyed by metric raw string.
+    // Persists across sheet opens for the same driver.
+    // Cleared when drivers change (new day brings new score).
+    @State private var intelligenceCache: [String: IntelligenceContent] = [:]
+    @State private var activeIntelligenceMetric: String? = nil
+
+    // Track last known drivers to detect day change and clear cache
+    @State private var lastKnownDriver1: String = ""
+    @State private var lastKnownDriver2: String = ""
 
     var body: some View {
         ZStack {
@@ -133,8 +138,14 @@ struct DashboardView: View {
                             MorningScoreCard(score: data.score, recentScores: data.recentScores)
                                 .padding(.horizontal, 20).padding(.bottom, 16)
 
-                            DriverChipRow(score: data.score)
-                                .padding(.horizontal, 20).padding(.bottom, 16)
+                            // E-11: Driver chips are tappable — open intelligence sheet
+                            DriverChipRow(
+                                score: data.score,
+                                onChipTap: { metric in
+                                    activeIntelligenceMetric = metric
+                                }
+                            )
+                            .padding(.horizontal, 20).padding(.bottom, 16)
 
                             if let explanation = data.explanation {
                                 LetterCard(score: data.score, explanation: explanation)
@@ -181,13 +192,39 @@ struct DashboardView: View {
                 .environmentObject(supabase)
                 .environmentObject(sync)
         }
+        // E-11: Intelligence sheet — opens when a driver chip is tapped
+        .sheet(item: Binding(
+            get: { activeIntelligenceMetric.map { MetricID(id: $0) } },
+            set: { activeIntelligenceMetric = $0?.id }
+        )) { metricID in
+            if let data = sync.dashboard {
+                IntelligenceSheet(
+                    metric: metricID.id,
+                    score: data.score,
+                    cachedContent: $intelligenceCache
+                )
+            }
+        }
+        .onChange(of: sync.dashboard?.score.driver1) { newDriver in
+            // New day brought different drivers — clear cache
+            guard let driver = newDriver, driver != lastKnownDriver1 else { return }
+            intelligenceCache.removeAll()
+            lastKnownDriver1 = driver
+            lastKnownDriver2 = sync.dashboard?.score.driver2 ?? ""
+        }
     }
 }
 
 // ─────────────────────────────────────────
+// METRIC ID  — Identifiable wrapper for sheet(item:)
+// ─────────────────────────────────────────
+
+struct MetricID: Identifiable {
+    let id: String
+}
+
+// ─────────────────────────────────────────
 // HEADER
-// Now owns the account button via onAccountTap closure
-// greeting() delegates to TimeOfDay enum
 // ─────────────────────────────────────────
 
 struct MorningBriefHeader: View {
@@ -383,14 +420,27 @@ struct GoldSparkline: View {
 
 // ─────────────────────────────────────────
 // DRIVER CHIP ROW
+// E-11: each chip is tappable via onChipTap closure
 // ─────────────────────────────────────────
 
 struct DriverChipRow: View {
     let score: DailyScore
+    let onChipTap: (String) -> Void
+
     var body: some View {
         HStack(spacing: 12) {
-            DriverChip(label: "Driver 1", metricRaw: score.driver1, delta: nil)
-            DriverChip(label: "Driver 2", metricRaw: score.driver2, delta: nil)
+            DriverChip(
+                label: "Driver 1",
+                metricRaw: score.driver1,
+                delta: nil,
+                onTap: { onChipTap(score.driver1) }
+            )
+            DriverChip(
+                label: "Driver 2",
+                metricRaw: score.driver2,
+                delta: nil,
+                onTap: { onChipTap(score.driver2) }
+            )
         }
     }
 }
@@ -399,6 +449,7 @@ struct DriverChip: View {
     let label: String
     let metricRaw: String
     let delta: String?
+    let onTap: () -> Void
 
     var metricName: String {
         Metric(rawValue: metricRaw)?.shortName
@@ -406,28 +457,42 @@ struct DriverChip: View {
     }
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(ChronosTheme.ink)
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1))
-                .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 3)
+        Button(action: onTap) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(ChronosTheme.ink)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.4), radius: 6, x: 0, y: 3)
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(label.uppercased())
-                    .font(.jost(size: 9, weight: .light))
-                    .foregroundColor(ChronosTheme.muted).tracking(2)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(label.uppercased())
+                        .font(.jost(size: 9, weight: .light))
+                        .foregroundColor(ChronosTheme.muted).tracking(2)
 
-                Text(metricName)
-                    .font(.cormorant(size: 20, weight: .medium))
-                    .foregroundColor(ChronosTheme.text)
+                    Text(metricName)
+                        .font(.cormorant(size: 20, weight: .medium))
+                        .foregroundColor(ChronosTheme.text)
 
-                if let d = delta {
-                    Text(d).font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.gold)
+                    if let d = delta {
+                        Text(d).font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.gold)
+                    }
+
+                    // Tap hint
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 8, weight: .light))
+                            .foregroundColor(ChronosTheme.gold.opacity(0.5))
+                        Text("Learn more")
+                            .font(.jost(size: 9, weight: .light))
+                            .foregroundColor(ChronosTheme.gold.opacity(0.5))
+                            .tracking(0.5)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 14)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 14)
         }
+        .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
     }
 }
