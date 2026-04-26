@@ -101,6 +101,10 @@ serve(async (req) => {
         steps: input.steps,
         active_minutes: input.active_minutes,
         distance_km: input.distance_km,
+        // H-01: Tier 1 metrics
+        spo2_pct: input.spo2_pct,
+        resting_energy: input.resting_energy,
+        stand_hours: input.stand_hours,
       },
       baseline,
       historyDays,

@@ -2,7 +2,7 @@
 // MBI Scoring Engine — Type Contracts
 // Version: 1.1 | Source of Truth governs all values
 
-export const DOMAIN_VERSION = "1.1";
+export const DOMAIN_VERSION = "1.2";
 
 // ─────────────────────────────────────────
 // INPUT TYPES
@@ -19,6 +19,9 @@ export interface DailyInput {
   steps?: number | null;
   active_minutes?: number | null;
   distance_km?: number | null;
+  spo2_pct?: number | null;
+  resting_energy?: number | null;
+  stand_hours?: number | null;
 }
 
 export interface Baseline {
@@ -32,6 +35,9 @@ export interface Baseline {
   steps_avg?: number | null;
   active_minutes_avg?: number | null;
   window_days: number;
+  spo2_avg?: number | null;
+  resting_energy_avg?: number | null;
+  stand_hours_avg?: number | null;
 }
 
 // ─────────────────────────────────────────
@@ -55,7 +61,10 @@ export type MetricName =
   | "sleep_efficiency"
   | "steps"
   | "active_minutes"
-  | "distance";
+  | "distance"
+  | "spo2"
+  | "resting_energy"
+  | "stand_hours";
 
 // ─────────────────────────────────────────
 // SCORE OUTPUT
