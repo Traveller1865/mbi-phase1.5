@@ -1,6 +1,6 @@
 // packages/domain/scoring.ts
 // MBI Scoring Engine — Score Formula, Bands, Alpha, Domain Scores
-// Version: 1.1
+// Version: 1.2 | H-01: Tier 1 metric expansion
 
 import type {
   Baseline,
@@ -23,7 +23,7 @@ function computeAlpha(deviations: MetricDeviation[]): number {
   if (flaggedCount >= 3) return 1.0;
   if (flaggedCount === 2) return 0.8;
   if (flaggedCount === 1) return 0.6;
-  return 0.6; // minimum
+  return 0.6;
 }
 
 // ─────────────────────────────────────────
@@ -38,7 +38,6 @@ export function getScoreBand(score: number): ScoreBand {
 
 // ─────────────────────────────────────────
 // HEALTH SCORE & RISK SCORE
-// Weighted positive composite vs penalty composite
 // ─────────────────────────────────────────
 function computeHealthAndRisk(deviations: MetricDeviation[]): { health: number; risk: number } {
   const MAX_PER_METRIC = 100;
@@ -48,15 +47,16 @@ function computeHealthAndRisk(deviations: MetricDeviation[]): { health: number; 
 
   for (const d of deviations) {
     if (d.weight === 0) continue;
+    // Modularity: metric with null value contributes 0 weight to pool
+    // so it doesn't inflate or deflate scores for present metrics
+    if (d.value == null) continue;
     totalWeight += d.weight;
 
-    // Health contribution: full credit if normal, partial if deviated
     const healthContrib = d.deviation === 0 ? MAX_PER_METRIC
       : d.deviation === -1 ? MAX_PER_METRIC * 0.6
       : MAX_PER_METRIC * 0.2;
     healthWeighted += healthContrib * d.weight;
 
-    // Risk penalty: scaled by deviation severity
     const riskPenalty = d.deviation === -2 ? 30 * d.weight
       : d.deviation === -1 ? 15 * d.weight
       : 0;
@@ -73,7 +73,11 @@ function computeHealthAndRisk(deviations: MetricDeviation[]): { health: number; 
 }
 
 // ─────────────────────────────────────────
-// DOMAIN SCORES (SoT §7)
+// DOMAIN SCORES (SoT §7 + H-01 expansion)
+// D1 Autonomic:  hrv, resting_hr, respiratory_rate, spo2
+// D2 Sleep:      sleep_duration, sleep_efficiency
+// D3 Activity:   steps, active_minutes, resting_energy, stand_hours
+// Missing metrics silently excluded — weight pool only counts present metrics
 // ─────────────────────────────────────────
 function computeDomainScores(
   deviations: MetricDeviation[],
@@ -82,7 +86,9 @@ function computeDomainScores(
   const byMetric = Object.fromEntries(deviations.map((d) => [d.metric, d]));
 
   const domainScore = (metrics: string[]): number | null => {
-    const relevant = metrics.map((m) => byMetric[m]).filter(Boolean);
+    const relevant = metrics
+      .map((m) => byMetric[m])
+      .filter((d) => d != null && d.value != null); // only present metrics
     if (relevant.length === 0) return null;
     const totalW = relevant.reduce((s, d) => s + d.weight, 0);
     if (totalW === 0) return null;
@@ -96,11 +102,15 @@ function computeDomainScores(
   };
 
   return {
-    d1_autonomic: domainScore(["hrv", "resting_hr"]),
+    d1_autonomic: domainScore(["hrv", "resting_hr", "respiratory_rate", "spo2"]),
     d2_sleep: domainScore(["sleep_duration", "sleep_efficiency"]),
-    d3_activity: domainScore(["steps", "active_minutes"]),
-    d4_stress: historyDays >= 7 ? domainScore(["hrv", "resting_hr", "sleep_duration"]) : null,
-    d5_allostatic: historyDays >= 30 ? domainScore(["hrv", "resting_hr", "sleep_duration", "sleep_efficiency", "steps"]) : null,
+    d3_activity: domainScore(["steps", "active_minutes", "resting_energy", "stand_hours"]),
+    d4_stress: historyDays >= 7
+      ? domainScore(["hrv", "resting_hr", "sleep_duration"])
+      : null,
+    d5_allostatic: historyDays >= 30
+      ? domainScore(["hrv", "resting_hr", "sleep_duration", "sleep_efficiency", "steps"])
+      : null,
   };
 }
 
@@ -114,7 +124,7 @@ function checkDeltaOverride(currentScore: number, recentScores: number[]): boole
 }
 
 // ─────────────────────────────────────────
-// NUDGE DOMAIN — lowest scoring active domain
+// NUDGE DOMAIN
 // ─────────────────────────────────────────
 export function selectNudgeDomain(
   domainScores: DomainScores
@@ -137,9 +147,9 @@ export function scoreDay(params: {
   input: DailyInput;
   baseline: Baseline | null;
   historyDays: number;
-  recentScores: number[];      // last 3 Chronos scores for delta override
+  recentScores: number[];
   stepGoal?: number;
-  engagementDays?: number;     // days since last user engagement
+  engagementDays?: number;
 }): ScoringResult {
   const {
     input,
@@ -152,7 +162,6 @@ export function scoreDay(params: {
 
   const isProvisional = historyDays < 7;
 
-  // No baseline yet — return provisional minimal score
   if (!baseline) {
     return {
       chronos_score: 70,

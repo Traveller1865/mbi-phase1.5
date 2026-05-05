@@ -1,10 +1,17 @@
 // ios/MBI/MBI/Views/AccountView.swift
-// MBI Phase 1.5 — Account Full Build · E-10 (R-04)
-// Pinned header · Tabbed layout: Overview / Goals / Health Info / Settings
-// R-03b: ResyncCard added to Settings tab
-// Fix: HorizonPlaceholderView moved to top level (was nested in AccountInfoNote)
+// MBI Phase 1.5 — Sprint 4: Profile Section Architecture
+// R1 — Step Goal: stepper replaced with text input + Save button
+// R2 — Weight: Save button added (no longer relies on onSubmit only)
+// R3 — Wake/Sleep time wheel: .colorScheme(.dark) + .accentColor(goldLight) for legibility
+// R4 — Height: confirmed display-only — E-06 onboarding schema not yet persisted to Supabase
+// R5 — Age: same as height — E-06 onboarding schema not yet persisted to Supabase
+// R6 — Phase 2 greyed rows: opacity raised from ~0.4 to ~0.6 for legibility
+// R7 — Connected Devices: union HKSourceQuery across stepCount, bodyMass, bloodPressureSystolic,
+//       heartRate — surfaces Apple Watch, VeSync scale, iHealth BP cuff. Deduplicated by source name.
+//       Sprint 5 — Epic 1 Close-Out
 
 import SwiftUI
+import HealthKit
 
 // ─────────────────────────────────────────
 // ACCOUNT VIEW
@@ -15,7 +22,7 @@ struct AccountView: View {
     @EnvironmentObject var sync: SyncCoordinator
     @Environment(\.dismiss) var dismiss
 
-    @State private var selectedTab: AccountTab = .overview
+    @State private var selectedTab: AccountTab = .profile
     @State private var showSignOutConfirm = false
     @State private var founderTapCount = 0
     @State private var showFounderSection = false
@@ -23,15 +30,10 @@ struct AccountView: View {
     var body: some View {
         ZStack {
             ChronosTheme.ink.ignoresSafeArea()
-
-            RadialGradient(
-                colors: [ChronosTheme.gold.opacity(0.05), .clear],
-                center: .top, startRadius: 0, endRadius: 300
-            )
-            .ignoresSafeArea()
+            RadialGradient(colors: [ChronosTheme.gold.opacity(0.05), .clear], center: .top, startRadius: 0, endRadius: 300)
+                .ignoresSafeArea()
 
             VStack(spacing: 0) {
-
                 // ── Dismiss ──
                 HStack {
                     Spacer()
@@ -43,70 +45,50 @@ struct AccountView: View {
                             .background(Circle().fill(ChronosTheme.surface))
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 20).padding(.top, 16).padding(.bottom, 8)
 
-                // ── Pinned profile header ──
                 AccountProfileHeader(
                     user: supabase.currentUser,
                     score: sync.dashboard?.score,
                     onAvatarTap: {
                         founderTapCount += 1
-                        if founderTapCount >= 7 {
-                            withAnimation(.easeInOut) { showFounderSection = true }
-                        }
+                        if founderTapCount >= 7 { withAnimation(.easeInOut) { showFounderSection = true } }
                     }
                 )
 
-                // ── Tab selector ──
                 AccountTabBar(selected: $selectedTab)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, 20).padding(.bottom, 4)
 
-                // ── Tab content ──
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
                         switch selectedTab {
-                        case .overview:
-                            AccountOverviewTab(
-                                score: sync.dashboard?.score,
-                                showSignOutConfirm: $showSignOutConfirm
-                            )
-                        case .goals:
-                            AccountGoalsTab(user: supabase.currentUser)
-                        case .healthInfo:
-                            AccountHealthInfoTab(user: supabase.currentUser)
-                        case .settings:
-                            AccountSettingsTab()
-                                .environmentObject(supabase)
-                                .environmentObject(sync)
+                        case .profile:
+                            AccountProfileTab(user: supabase.currentUser).environmentObject(supabase)
+                        case .preferences:
+                            AccountPreferencesTab(user: supabase.currentUser).environmentObject(supabase)
+                        case .connections:
+                            AccountConnectionsTab().environmentObject(supabase).environmentObject(sync)
+                        case .account:
+                            AccountAccountTab(user: supabase.currentUser, score: sync.dashboard?.score, showSignOutConfirm: $showSignOutConfirm)
                         }
 
-                        // Founder section — tap avatar 7× to reveal
                         if showFounderSection {
                             VStack(spacing: 0) {
                                 HStack {
                                     Rectangle().fill(ChronosTheme.gold.opacity(0.2)).frame(height: 1)
-                                    Text("FOUNDER")
-                                        .font(.jost(size: 8, weight: .light))
-                                        .foregroundColor(ChronosTheme.gold.opacity(0.5))
-                                        .tracking(3).padding(.horizontal, 12)
+                                    Text("FOUNDER").font(.jost(size: 8, weight: .light))
+                                        .foregroundColor(ChronosTheme.gold.opacity(0.5)).tracking(3).padding(.horizontal, 12)
                                     Rectangle().fill(ChronosTheme.gold.opacity(0.2)).frame(height: 1)
                                 }
                                 .padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 16)
-
                                 AdminView()
                             }
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
 
                         Text("Chronos · MBI · Confidential")
-                            .font(.jost(size: 9, weight: .light))
-                            .foregroundColor(ChronosTheme.faint)
-                            .tracking(2)
-                            .padding(.top, 32)
-                            .padding(.bottom, 40)
+                            .font(.jost(size: 9, weight: .light)).foregroundColor(ChronosTheme.faint).tracking(2)
+                            .padding(.top, 32).padding(.bottom, 40)
                     }
                 }
             }
@@ -114,9 +96,7 @@ struct AccountView: View {
         .confirmationDialog("Sign out?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) { supabase.signOut() }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("You'll need to sign back in.")
-        }
+        } message: { Text("You'll need to sign back in.") }
     }
 }
 
@@ -125,10 +105,10 @@ struct AccountView: View {
 // ─────────────────────────────────────────
 
 enum AccountTab: String, CaseIterable {
-    case overview   = "Overview"
-    case goals      = "Goals"
-    case healthInfo = "Health Info"
-    case settings   = "Settings"
+    case profile     = "Profile"
+    case preferences = "Preferences"
+    case connections = "Connections"
+    case account     = "Account"
 }
 
 // ─────────────────────────────────────────
@@ -137,7 +117,6 @@ enum AccountTab: String, CaseIterable {
 
 struct AccountTabBar: View {
     @Binding var selected: AccountTab
-
     var body: some View {
         HStack(spacing: 0) {
             ForEach(AccountTab.allCases, id: \.self) { tab in
@@ -145,21 +124,15 @@ struct AccountTabBar: View {
                     VStack(spacing: 6) {
                         Text(tab.rawValue)
                             .font(.jost(size: 11, weight: selected == tab ? .medium : .light))
-                            .foregroundColor(selected == tab ? ChronosTheme.gold : ChronosTheme.muted)
-                            .tracking(0.5)
-
-                        Rectangle()
-                            .fill(selected == tab ? ChronosTheme.gold : Color.clear)
-                            .frame(height: 1)
+                            .foregroundColor(selected == tab ? ChronosTheme.gold : ChronosTheme.muted).tracking(0.5)
+                        Rectangle().fill(selected == tab ? ChronosTheme.gold : Color.clear).frame(height: 1)
                     }
                 }
                 .frame(maxWidth: .infinity)
             }
         }
         .padding(.vertical, 8)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(ChronosTheme.border).frame(height: 1)
-        }
+        .overlay(alignment: .bottom) { Rectangle().fill(ChronosTheme.border).frame(height: 1) }
     }
 }
 
@@ -176,6 +149,7 @@ struct AccountProfileHeader: View {
         switch score?.scoreBand {
         case .thriving:   return Color(red: 0.40, green: 0.82, blue: 0.50)
         case .recovering: return ChronosTheme.goldLight
+        case .yellowline: return Color(red: 1.0, green: 0.72, blue: 0.20)
         case .drifting:   return Color(red: 1.0, green: 0.78, blue: 0.28)
         case .redline:    return Color(red: 1.0, green: 0.40, blue: 0.40)
         case .none:       return ChronosTheme.muted
@@ -186,44 +160,28 @@ struct AccountProfileHeader: View {
         HStack(spacing: 16) {
             Button(action: onAvatarTap) {
                 ZStack {
-                    Circle()
-                        .fill(ChronosTheme.goldDim)
+                    Circle().fill(ChronosTheme.goldDim)
                         .overlay(Circle().stroke(ChronosTheme.gold.opacity(0.3), lineWidth: 1))
                         .frame(width: 60, height: 60)
                     Text(initials(from: user?.displayName))
-                        .font(.cormorant(size: 24, weight: .light))
-                        .foregroundColor(ChronosTheme.gold)
+                        .font(.cormorant(size: 24, weight: .light)).foregroundColor(ChronosTheme.gold)
                 }
-            }
-            .buttonStyle(.plain)
+            }.buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(user?.displayName ?? "—")
-                    .font(.cormorant(size: 24, weight: .light))
-                    .foregroundColor(ChronosTheme.text)
-
-                Text(user?.email ?? "")
-                    .font(.jost(size: 11, weight: .light))
-                    .foregroundColor(ChronosTheme.muted)
-
+                Text(user?.displayName ?? "—").font(.cormorant(size: 24, weight: .light)).foregroundColor(ChronosTheme.text)
+                Text(user?.email ?? "").font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.muted)
                 if let band = score?.scoreBand {
                     Text(band.rawValue.uppercased())
-                        .font(.jost(size: 8, weight: .medium))
-                        .foregroundColor(bandColor)
-                        .tracking(2)
+                        .font(.jost(size: 8, weight: .medium)).foregroundColor(bandColor).tracking(2)
                         .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(bandColor.opacity(0.1))
-                                .overlay(Capsule().stroke(bandColor.opacity(0.25), lineWidth: 1))
-                        )
+                        .background(Capsule().fill(bandColor.opacity(0.1))
+                            .overlay(Capsule().stroke(bandColor.opacity(0.25), lineWidth: 1)))
                 }
             }
-
             Spacer()
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 20)
+        .padding(.horizontal, 20).padding(.bottom, 20)
     }
 
     private func initials(from name: String?) -> String {
@@ -235,167 +193,573 @@ struct AccountProfileHeader: View {
 }
 
 // ─────────────────────────────────────────
-// OVERVIEW TAB
+// TAB 1: PROFILE
 // ─────────────────────────────────────────
 
-struct AccountOverviewTab: View {
+struct AccountProfileTab: View {
+    let user: MBIUser?
+    @EnvironmentObject var supabase: SupabaseService
+
+    // R1: Step Goal as text input
+    @State private var stepGoalText: String = "8,000"
+    @State private var healthGoal: HealthGoal = .generalWellness
+    @State private var weightLbsText: String = ""
+    @State private var wakeTime: Date = AccountProfileTab.defaultTime(hour: 6, minute: 0)
+    @State private var sleepTime: Date = AccountProfileTab.defaultTime(hour: 22, minute: 0)
+    @State private var showWakePicker = false
+    @State private var showSleepPicker = false
+    @State private var showHealthGoalPicker = false
+
+    @State private var savingField: String? = nil
+    @State private var savedField: String? = nil
+    @State private var saveError: String? = nil
+
+    var body: some View {
+        VStack(spacing: 10) {
+            AccountSectionHeader(label: "SCORING INPUTS")
+            stepGoalRow
+            healthGoalRow
+            weightRow
+            timeRow(icon: "sun.horizon", label: "Wake Time", displayValue: displayTime(wakeTime), isExpanded: $showWakePicker,
+                picker: DatePicker("", selection: $wakeTime, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel).labelsHidden()
+                    .colorScheme(.dark)
+                    .accentColor(ChronosTheme.goldLight)  // R3: visible gold selection band
+                    .onChange(of: wakeTime) { saveSingle(field: "wake_time", wakeTime: wakeTime) }
+            )
+            timeRow(icon: "moon.zzz", label: "Sleep Time", displayValue: displayTime(sleepTime), isExpanded: $showSleepPicker,
+                picker: DatePicker("", selection: $sleepTime, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel).labelsHidden()
+                    .colorScheme(.dark)
+                    .accentColor(ChronosTheme.goldLight)  // R3
+                    .onChange(of: sleepTime) { saveSingle(field: "sleep_time", sleepTime: sleepTime) }
+            )
+            // R4: Height — display only. E-06 onboarding height field not yet persisted to Supabase.
+            AccountRow(icon: "ruler",    label: "Height", value: "Not yet collected")
+            // R5: Age — display only. E-06 onboarding birthday field not yet persisted to Supabase.
+            AccountRow(icon: "calendar", label: "Age",    value: "Not yet collected")
+
+            AccountPhase2Separator()
+            AccountRowGreyed(icon: "chart.bar.xaxis",        label: "Goal Priority",         value: "Balanced")
+            AccountRowGreyed(icon: "bandage",                label: "Illness Mode",           value: "Off")
+            AccountRowGreyed(icon: "airplane",               label: "Travel / Timezone Mode", value: "Off")
+            AccountRowGreyed(icon: "wineglass",              label: "Alcohol Indicator",      value: "Off")
+            AccountRowGreyed(icon: "pencil.and.outline",     label: "Manual Stress Event",    value: "—")
+            AccountRowGreyed(icon: "arrow.counterclockwise", label: "Baseline Reset",         value: "")
+            AccountRowGreyed(icon: "lock",                   label: "Baseline Lock",          value: "Off")
+        }
+        .padding(.horizontal, 20).padding(.top, 20)
+        .onAppear { seedFromUser() }
+    }
+
+    // MARK: - R1: Step Goal — text input + Save button
+
+    private var stepGoalRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                Text("Daily Step Goal").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                Spacer()
+                HStack(spacing: 8) {
+                    TextField("8,000", text: $stepGoalText)
+                        .font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.goldLight)
+                        .keyboardType(.numberPad).multilineTextAlignment(.trailing).frame(width: 70)
+                    saveButton(action: saveStepGoal)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            saveStatusRow(field: "step_goal")
+        }
+        .background(roundedCard)
+    }
+
+    // MARK: - Health Goal picker
+
+    private var healthGoalRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { showHealthGoalPicker.toggle() } }) {
+                HStack(spacing: 14) {
+                    Image(systemName: "target")
+                        .font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                    Text("Health Goal").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                    Spacer()
+                    Text(healthGoal.displayLabel).font(.jost(size: 12, weight: .light)).foregroundColor(ChronosTheme.goldLight)
+                    Image(systemName: showHealthGoalPicker ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .light)).foregroundColor(ChronosTheme.faint)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 14)
+            }.buttonStyle(.plain)
+
+            if showHealthGoalPicker {
+                VStack(spacing: 0) {
+                    Rectangle().fill(ChronosTheme.border).frame(height: 1)
+                    ForEach(HealthGoal.allCases) { goal in
+                        Button(action: {
+                            healthGoal = goal
+                            withAnimation { showHealthGoalPicker = false }
+                            saveSingle(field: "health_goal", healthGoal: goal)
+                        }) {
+                            HStack {
+                                Text(goal.displayLabel)
+                                    .font(.jost(size: 13, weight: healthGoal == goal ? .medium : .light))
+                                    .foregroundColor(healthGoal == goal ? ChronosTheme.goldLight : ChronosTheme.muted)
+                                Spacer()
+                                if healthGoal == goal {
+                                    Image(systemName: "checkmark").font(.system(size: 10, weight: .light)).foregroundColor(ChronosTheme.gold)
+                                }
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                        }.buttonStyle(.plain)
+                        if goal != HealthGoal.allCases.last {
+                            Rectangle().fill(ChronosTheme.border.opacity(0.5)).frame(height: 1).padding(.leading, 16)
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            saveStatusRow(field: "health_goal")
+        }
+        .background(roundedCard).clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    // MARK: - R2: Weight — text input + explicit Save button
+
+    private var weightRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "scalemass")
+                    .font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                Text("Weight").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                Spacer()
+                HStack(spacing: 8) {
+                    HStack(spacing: 4) {
+                        TextField(user?.weightLbs == nil ? "Enter lbs" : "", text: $weightLbsText)
+                            .font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.goldLight)
+                            .keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(width: 72)
+                        if !weightLbsText.isEmpty {
+                            Text("lbs").font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.muted)
+                        }
+                    }
+                    saveButton(action: saveWeight)
+                        .disabled(weightLbsText.isEmpty).opacity(weightLbsText.isEmpty ? 0.4 : 1.0)
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            saveStatusRow(field: "weight_lbs")
+        }
+        .background(roundedCard)
+    }
+
+    // MARK: - R3: Time rows — dark scheme, gold accent
+
+    @ViewBuilder
+    private func timeRow<P: View>(icon: String, label: String, displayValue: String, isExpanded: Binding<Bool>, picker: P) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.wrappedValue.toggle() } }) {
+                HStack(spacing: 14) {
+                    Image(systemName: icon).font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                    Text(label).font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                    Spacer()
+                    Text(displayValue).font(.jost(size: 12, weight: .light)).foregroundColor(ChronosTheme.goldLight)
+                    Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .light)).foregroundColor(ChronosTheme.faint)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 14)
+            }.buttonStyle(.plain)
+
+            if isExpanded.wrappedValue {
+                VStack(spacing: 0) {
+                    Rectangle().fill(ChronosTheme.border).frame(height: 1)
+                    picker.padding(.vertical, 4).frame(maxWidth: .infinity).background(ChronosTheme.surface)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+            saveStatusRow(field: label == "Wake Time" ? "wake_time" : "sleep_time")
+        }
+        .background(roundedCard).clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    // MARK: - Shared UI builders
+
+    private var roundedCard: some View {
+        RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1))
+    }
+
+    private func saveButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("Save")
+                .font(.jost(size: 11, weight: .medium)).foregroundColor(ChronosTheme.gold).tracking(0.5)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(ChronosTheme.goldDim)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChronosTheme.gold.opacity(0.3), lineWidth: 1)))
+        }
+    }
+
+    @ViewBuilder
+    private func saveStatusRow(field: String) -> some View {
+        if savingField == field {
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.6).tint(ChronosTheme.gold.opacity(0.5))
+                Text("Saving...").font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.faint)
+            }.padding(.horizontal, 16).padding(.bottom, 12)
+        } else if savedField == field {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle").font(.system(size: 11, weight: .light))
+                    .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50))
+                Text("Saved").font(.jost(size: 11, weight: .light))
+                    .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50))
+            }.padding(.horizontal, 16).padding(.bottom, 12)
+        } else if saveError != nil && savingField == nil && savedField == nil {
+            Text(saveError ?? "").font(.jost(size: 11, weight: .light))
+                .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.45))
+                .padding(.horizontal, 16).padding(.bottom, 12)
+        }
+    }
+
+    // MARK: - Save actions
+
+    private func saveStepGoal() {
+        let cleaned = stepGoalText.replacingOccurrences(of: ",", with: "")
+        guard let goal = Int(cleaned), goal >= 1000, goal <= 30000 else {
+            saveError = "Enter a value between 1,000 and 30,000"; return
+        }
+        let f = NumberFormatter(); f.numberStyle = .decimal
+        stepGoalText = f.string(from: NSNumber(value: goal)) ?? "\(goal)"
+        saveSingle(field: "step_goal", stepGoal: goal)
+    }
+
+    private func saveWeight() {
+        guard let lbs = Double(weightLbsText) else { saveError = "Enter a valid number"; return }
+        saveSingle(field: "weight_lbs", weightLbs: lbs)
+    }
+
+    // MARK: - Helpers
+
+    private func displayTime(_ date: Date) -> String {
+        let f = DateFormatter(); f.timeStyle = .short; return f.string(from: date)
+    }
+
+    private static func defaultTime(hour: Int, minute: Int) -> Date {
+        var c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        c.hour = hour; c.minute = minute
+        return Calendar.current.date(from: c) ?? Date()
+    }
+
+    private func hmString(from date: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f.string(from: date)
+    }
+
+    private func timeFromHM(_ hm: String) -> Date {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"
+        return f.date(from: hm) ?? AccountProfileTab.defaultTime(hour: 6, minute: 0)
+    }
+
+    private func seedFromUser() {
+        guard let u = user else { return }
+        let f = NumberFormatter(); f.numberStyle = .decimal
+        stepGoalText = f.string(from: NSNumber(value: u.stepGoal)) ?? "\(u.stepGoal)"
+        healthGoal   = HealthGoal(rawValue: u.healthGoal) ?? .generalWellness
+        if let w = u.weightLbs { weightLbsText = String(format: "%.1f", w) }
+        wakeTime  = timeFromHM(u.wakeTime)
+        sleepTime = timeFromHM(u.sleepTime)
+    }
+
+    private func saveSingle(field: String, stepGoal: Int? = nil, healthGoal: HealthGoal? = nil,
+                            weightLbs: Double? = nil, wakeTime: Date? = nil, sleepTime: Date? = nil) {
+        guard let userId = supabase.session?.userId else { return }
+        savingField = field; savedField = nil; saveError = nil
+        Task {
+            do {
+                try await supabase.updateProfile(
+                    userId: userId, stepGoal: stepGoal, healthGoal: healthGoal?.rawValue,
+                    weightLbs: weightLbs, wakeTime: wakeTime.map { hmString(from: $0) },
+                    sleepTime: sleepTime.map { hmString(from: $0) }
+                )
+                await MainActor.run { savingField = nil; savedField = field }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run { savedField = nil }
+            } catch {
+                await MainActor.run { savingField = nil; saveError = "Couldn't save — try again" }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// TAB 2: PREFERENCES
+// ─────────────────────────────────────────
+
+struct AccountPreferencesTab: View {
+    let user: MBIUser?
+    @EnvironmentObject var supabase: SupabaseService
+
+    @State private var morningBriefEnabled: Bool = true
+    @State private var isSaving = false
+    @State private var savedConfirm = false
+    @State private var saveError: String? = nil
+
+    var body: some View {
+        VStack(spacing: 10) {
+            AccountSectionHeader(label: "DELIVERY")
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 14) {
+                    Image(systemName: "bell").font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                    Text("Morning Brief").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                    Spacer()
+                    Toggle("", isOn: $morningBriefEnabled).tint(ChronosTheme.gold).labelsHidden()
+                        .onChange(of: morningBriefEnabled) { saveToggle(morningBriefEnabled) }
+                }
+                .padding(.horizontal, 16).padding(.vertical, 14)
+
+                if isSaving {
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.6).tint(ChronosTheme.gold.opacity(0.5))
+                        Text("Saving...").font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.faint)
+                    }.padding(.horizontal, 16).padding(.bottom, 12)
+                } else if savedConfirm {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle").font(.system(size: 11, weight: .light))
+                            .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50))
+                        Text("Saved").font(.jost(size: 11, weight: .light))
+                            .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50))
+                    }.padding(.horizontal, 16).padding(.bottom, 12)
+                } else if let err = saveError {
+                    Text(err).font(.jost(size: 11, weight: .light))
+                        .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.45))
+                        .padding(.horizontal, 16).padding(.bottom, 12)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1)))
+
+            AccountPhase2Separator()
+            AccountRowGreyed(icon: "clock",                   label: "Brief Delivery Time",  value: "7:00 AM")
+            AccountRowGreyed(icon: "waveform",                label: "Response Tone",        value: "Balanced")
+            AccountRowGreyed(icon: "text.alignleft",          label: "Explanation Depth",    value: "Standard")
+            AccountRowGreyed(icon: "dial.medium",             label: "Nudge Intensity",      value: "Standard")
+            AccountRowGreyed(icon: "arrow.trianglehead.2.counterclockwise", label: "Nudge Type", value: "Mixed")
+            AccountRowGreyed(icon: "rectangle.3.group",       label: "Display Mode",         value: "Just the Highlights")
+            AccountRowGreyed(icon: "textformat.size",         label: "Font Size",            value: "16pt")
+            AccountRowGreyed(icon: "play.slash",              label: "Reduced Animation",    value: "Off")
+            AccountRowGreyed(icon: "circle.lefthalf.filled",  label: "High Contrast",        value: "Off")
+            AccountRowGreyed(icon: "flask",                   label: "Beta Features",        value: "Off")
+        }
+        .padding(.horizontal, 20).padding(.top, 20)
+        .onAppear { morningBriefEnabled = user?.morningBriefEnabled ?? true }
+    }
+
+    private func saveToggle(_ enabled: Bool) {
+        guard let userId = supabase.session?.userId else { return }
+        isSaving = true; savedConfirm = false; saveError = nil
+        Task {
+            do {
+                try await supabase.updateProfile(userId: userId, morningBriefEnabled: enabled)
+                await MainActor.run { isSaving = false; savedConfirm = true }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run { savedConfirm = false }
+            } catch {
+                await MainActor.run { isSaving = false; saveError = "Couldn't save — try again" }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// TAB 3: CONNECTIONS
+// Sprint 5 — R7 updated: union HKSourceQuery across quantity types + BP correlation.
+// Covers Apple Watch (stepCount/heartRate), smart scale (bodyMass/bodyFat/BMI),
+// BP cuff via HKCorrelationType.bloodPressure — the correct registration point for BP devices.
+// Deduplicated via Set<String>. UI layer unchanged — only loadConnectedDevices() is replaced.
+// ─────────────────────────────────────────
+
+struct AccountConnectionsTab: View {
+    @EnvironmentObject var supabase: SupabaseService
+    @EnvironmentObject var sync: SyncCoordinator
+
+    @State private var connectedDevices: [String] = []
+    @State private var devicesLoaded = false
+
+    var body: some View {
+        VStack(spacing: 10) {
+            AccountSectionHeader(label: "APPLE HEALTH")
+
+            AccountRow(icon: "applewatch", label: "HealthKit", value: "Connected",
+                       valueColor: Color(red: 0.40, green: 0.82, blue: 0.50))
+
+            // Sprint 5: Device list populated via union query — see loadConnectedDevices()
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 14) {
+                    Image(systemName: "iphone")
+                        .font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                    Text("Connected Devices").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, devicesLoaded && !connectedDevices.isEmpty ? 8 : 14)
+
+                if !devicesLoaded {
+                    HStack(spacing: 8) {
+                        ProgressView().scaleEffect(0.6).tint(ChronosTheme.gold.opacity(0.5))
+                        Text("Reading devices...").font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.faint)
+                    }.padding(.horizontal, 16).padding(.bottom, 14)
+                } else if connectedDevices.isEmpty {
+                    Text("None detected").font(.jost(size: 12, weight: .light)).foregroundColor(ChronosTheme.muted)
+                        .padding(.horizontal, 16).padding(.bottom, 14)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(connectedDevices, id: \.self) { device in
+                            HStack(spacing: 10) {
+                                Circle().fill(Color(red: 0.40, green: 0.82, blue: 0.50)).frame(width: 5, height: 5)
+                                Text(device).font(.jost(size: 12, weight: .light)).foregroundColor(ChronosTheme.muted)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16).padding(.bottom, 14)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1)))
+
+            ResyncCard().environmentObject(supabase).environmentObject(sync)
+
+            AccountPhase2Separator()
+            AccountRowGreyed(icon: "xmark.circle",   label: "Exclude Today's Data", value: "")
+            AccountRowGreyed(icon: "arrow.clockwise", label: "Sync Frequency",      value: "On app open")
+        }
+        .padding(.horizontal, 20).padding(.top, 20)
+        .task { await loadConnectedDevices() }
+    }
+
+    // MARK: - Sprint 5: Union HKSourceQuery across quantity types + blood pressure correlation.
+    //
+    // Blood pressure is stored as HKCorrelationType (.bloodPressure), not a HKQuantityType.
+    // BP devices register their source against the correlation — querying only
+    // .bloodPressureSystolic (quantity) will miss the cuff entirely.
+    // This function runs two query passes:
+    //   Pass 1 — HKQuantityType identifiers (Watch, scale, heartRate catch-all)
+    //   Pass 2 — HKCorrelationType.bloodPressure (BP cuff)
+    // Both passes feed the same Set<String> and share the same DispatchGroup.
+    // group.notify fires once, atomically, after all queries complete.
+    // Set<String> deduplicates — any device writing multiple types appears exactly once.
+    // The MBI app bundle is filtered from all passes.
+
+    private func loadConnectedDevices() async {
+        guard HKHealthStore.isHealthDataAvailable() else {
+            connectedDevices = []; devicesLoaded = true; return
+        }
+
+        let store = HKHealthStore()
+        let bundlePrefix = Bundle.main.bundleIdentifier ?? "com.mbi"
+        var allSourceNames: Set<String> = []
+        let group = DispatchGroup()
+
+        // Pass 1 — Quantity types: Watch (stepCount/heartRate), scale (bodyMass — weight only)
+        let quantityIdentifiers: [HKQuantityTypeIdentifier] = [
+            .stepCount,             // Apple Watch, iPhone
+            .heartRate,             // Broad catch — most wearables write heartRate
+            .bodyMass               // Smart scale — weight only, no additional body composition metrics
+        ]
+
+        for identifier in quantityIdentifiers {
+            guard let sampleType = HKQuantityType.quantityType(forIdentifier: identifier) else { continue }
+            group.enter()
+            let query = HKSourceQuery(sampleType: sampleType, samplePredicate: nil) { _, sources, _ in
+                if let sources = sources {
+                    for source in sources where !source.bundleIdentifier.hasPrefix(bundlePrefix) {
+                        allSourceNames.insert(source.name)
+                    }
+                }
+                group.leave()
+            }
+            store.execute(query)
+        }
+
+        // Pass 2 — Blood pressure correlation type.
+        // BP devices write HKCorrelationType.bloodPressure, not HKQuantityType.bloodPressureSystolic.
+        // This is the correct registration point for the BP cuff source.
+        if let bpType = HKCorrelationType.correlationType(forIdentifier: .bloodPressure) {
+            group.enter()
+            let bpQuery = HKSourceQuery(sampleType: bpType, samplePredicate: nil) { _, sources, _ in
+                if let sources = sources {
+                    for source in sources where !source.bundleIdentifier.hasPrefix(bundlePrefix) {
+                        allSourceNames.insert(source.name)
+                    }
+                }
+                group.leave()
+            }
+            store.execute(bpQuery)
+        }
+
+        group.notify(queue: .main) {
+            self.connectedDevices = allSourceNames.sorted()
+            self.devicesLoaded = true
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// TAB 4: ACCOUNT
+// ─────────────────────────────────────────
+
+struct AccountAccountTab: View {
+    let user: MBIUser?
     let score: DailyScore?
     @Binding var showSignOutConfirm: Bool
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 10) {
+            AccountSectionHeader(label: "IDENTITY")
+            AccountRow(icon: "person",   label: "Display Name", value: user?.displayName ?? "—")
+            AccountRow(icon: "envelope", label: "Email",        value: user?.email ?? "—")
 
+            AccountSectionHeader(label: "PLATFORM").padding(.top, 8)
+            AccountRow(icon: "heart.fill", label: "Apple Health", value: "Connected",
+                       valueColor: Color(red: 0.40, green: 0.82, blue: 0.50))
             if let score {
-                AccountStatsPills(score: score)
-                    .padding(.horizontal, 20)
+                AccountRow(icon: "waveform.path.ecg", label: "Score Status",
+                           value: score.isProvisional ? "Building baseline" : "Baseline active",
+                           valueColor: score.isProvisional ? ChronosTheme.gold : Color(red: 0.40, green: 0.82, blue: 0.50))
+                AccountRow(icon: "cpu", label: "Engine", value: score.domainVersion)
             }
+            AccountRow(icon: "info.circle", label: "App Version",
+                       value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "—")
 
-            VStack(spacing: 10) {
-                AccountRow(icon: "heart.fill",
-                           label: "Apple Health",
-                           value: "Connected",
-                           valueColor: Color(red: 0.40, green: 0.82, blue: 0.50))
-
-                if let score {
-                    AccountRow(icon: "waveform.path.ecg",
-                               label: "Score Status",
-                               value: score.isProvisional ? "Building baseline" : "Baseline active",
-                               valueColor: score.isProvisional
-                                   ? ChronosTheme.gold
-                                   : Color(red: 0.40, green: 0.82, blue: 0.50))
-
-                    AccountRow(icon: "cpu",
-                               label: "Engine",
-                               value: score.domainVersion)
-                }
-            }
-            .padding(.horizontal, 20)
+            AccountSectionHeader(label: "LEGAL").padding(.top, 8)
+            // R8: Post-sprint — URLs to be wired when policies are published
+            AccountTappableRow(icon: "doc.text",           label: "Privacy Policy")            { /* TODO: wire URL */ }
+            AccountTappableRow(icon: "doc.badge.gearshape", label: "Data Provisioning Policy") { /* TODO: wire URL */ }
 
             Button(action: { showSignOutConfirm = true }) {
                 HStack(spacing: 10) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .font(.system(size: 13, weight: .light))
-                    Text("Sign Out")
-                        .font(.jost(size: 13, weight: .light))
-                        .tracking(1)
+                    Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 13, weight: .light))
+                    Text("Sign Out").font(.jost(size: 13, weight: .light)).tracking(1)
                 }
                 .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.45).opacity(0.8))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Color(red: 1.0, green: 0.35, blue: 0.35).opacity(0.06))
-                        .overlay(RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color(red: 1.0, green: 0.35, blue: 0.35).opacity(0.15), lineWidth: 1))
-                )
+                .frame(maxWidth: .infinity).padding(.vertical, 15)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color(red: 1.0, green: 0.35, blue: 0.35).opacity(0.06))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(red: 1.0, green: 0.35, blue: 0.35).opacity(0.15), lineWidth: 1)))
             }
-            .padding(.horizontal, 20)
             .padding(.top, 8)
+
+            AccountPhase2Separator().padding(.top, 4)
+            AccountRowGreyed(icon: "lock.rotation",            label: "Password Change",          value: "")
+            AccountRowGreyed(icon: "creditcard",               label: "Subscription Plan",        value: "Phase 1")
+            AccountRowGreyed(icon: "bell.badge",               label: "Notification Permissions", value: "Off")
+            AccountRowGreyed(icon: "exclamationmark.triangle", label: "Redline Escalation",       value: "Passive")
+            AccountRowGreyed(icon: "brain",                    label: "AI Training Opt-out",      value: "Opted in")
+            AccountRowGreyed(icon: "flask",                    label: "Research Participation",   value: "Opted in")
+            AccountRowGreyed(icon: "trash",                    label: "Delete Account",           value: "")
         }
-        .padding(.top, 20)
+        .padding(.horizontal, 20).padding(.top, 20)
     }
 }
 
 // ─────────────────────────────────────────
-// GOALS TAB
-// ─────────────────────────────────────────
-
-struct AccountGoalsTab: View {
-    let user: MBIUser?
-
-    var body: some View {
-        VStack(spacing: 10) {
-            if let user {
-                AccountRow(icon: "figure.walk",
-                           label: "Daily Step Goal",
-                           value: "\(user.stepGoal) steps")
-            }
-
-            AccountRow(icon: "moon.stars",
-                       label: "Brief Delivery",
-                       value: "Morning",
-                       valueColor: ChronosTheme.gold)
-
-            AccountRow(icon: "target",
-                       label: "Health Goal",
-                       value: user != nil ? "Longevity" : "—",
-                       valueColor: ChronosTheme.muted)
-
-            AccountInfoNote(text: "Goal editing and brief delivery time preferences coming in the next update. Wake and sleep time prefs will personalize your morning and evening briefs.")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-    }
-}
-
-// ─────────────────────────────────────────
-// HEALTH INFO TAB
-// ─────────────────────────────────────────
-
-struct AccountHealthInfoTab: View {
-    let user: MBIUser?
-
-    var body: some View {
-        VStack(spacing: 10) {
-            AccountRow(icon: "ruler",       label: "Height",      value: "—")
-            AccountRow(icon: "scalemass",   label: "Weight",      value: "—")
-            AccountRow(icon: "calendar",    label: "Age",         value: "—")
-            AccountRow(icon: "heart.text.square", label: "Health Goal", value: "—")
-
-            AccountInfoNote(text: "Health info is captured during onboarding. Writing these values to your profile is coming in a future update.")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-    }
-}
-
-// ─────────────────────────────────────────
-// SETTINGS TAB
-// Notifications · HealthKit · Wake/sleep · Resync
-// ─────────────────────────────────────────
-
-struct AccountSettingsTab: View {
-    @EnvironmentObject var supabase: SupabaseService
-    @EnvironmentObject var sync: SyncCoordinator
-
-    var body: some View {
-        VStack(spacing: 10) {
-            AccountRow(icon: "bell",
-                       label: "Morning Brief",
-                       value: "On",
-                       valueColor: Color(red: 0.40, green: 0.82, blue: 0.50))
-
-            AccountRow(icon: "moon.fill",
-                       label: "Wake Time",
-                       value: "6:00 AM",
-                       valueColor: ChronosTheme.muted)
-
-            AccountRow(icon: "moon.zzz",
-                       label: "Sleep Time",
-                       value: "10:00 PM",
-                       valueColor: ChronosTheme.muted)
-
-            AccountRow(icon: "applewatch",
-                       label: "HealthKit",
-                       value: "Connected",
-                       valueColor: Color(red: 0.40, green: 0.82, blue: 0.50))
-
-            // ── History Resync ──────────────────────────────────────
-            ResyncCard()
-                .environmentObject(supabase)
-                .environmentObject(sync)
-
-            AccountInfoNote(text: "Wake and sleep time editing, notification controls, and HealthKit re-authorization coming in the next update.")
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-    }
-}
-
-// ─────────────────────────────────────────
-// RESYNC CARD
-// Full history re-score. Used after backend changes
-// (e.g. R-03b D5 fix) to populate new domain scores.
+// RESYNC CARD  (unchanged)
 // ─────────────────────────────────────────
 
 struct ResyncCard: View {
@@ -410,122 +774,65 @@ struct ResyncCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-
-            // Header row
             HStack(spacing: 12) {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 13, weight: .light))
-                    .foregroundColor(ChronosTheme.gold)
-                    .frame(width: 20)
-
+                    .font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Resync History")
-                        .font(.jost(size: 13, weight: .light))
-                        .foregroundColor(ChronosTheme.text)
+                    Text("Resync History").font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
                     Text("Re-scores all available Apple Health history.")
-                        .font(.jost(size: 11, weight: .light))
-                        .foregroundColor(ChronosTheme.faint)
-                        .lineSpacing(3)
+                        .font(.jost(size: 11, weight: .light)).foregroundColor(ChronosTheme.faint).lineSpacing(3)
                 }
-
                 Spacer()
-
-                if isDone {
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 16, weight: .light))
-                        .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50))
-                }
+                if isDone { Image(systemName: "checkmark.circle").font(.system(size: 16, weight: .light))
+                    .foregroundColor(Color(red: 0.40, green: 0.82, blue: 0.50)) }
             }
 
-            // Progress bar — visible while running
             if isResyncing {
                 VStack(spacing: 6) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 2).fill(ChronosTheme.faint.opacity(0.3)).frame(height: 2)
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(ChronosTheme.faint.opacity(0.3))
-                                .frame(height: 2)
-
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(LinearGradient(
-                                    colors: [ChronosTheme.gold.opacity(0.6), ChronosTheme.goldLight],
-                                    startPoint: .leading, endPoint: .trailing
-                                ))
-                                .frame(
-                                    width: total > 0
-                                        ? geo.size.width * CGFloat(progress) / CGFloat(total)
-                                        : 0,
-                                    height: 2
-                                )
+                                .fill(LinearGradient(colors: [ChronosTheme.gold.opacity(0.6), ChronosTheme.goldLight], startPoint: .leading, endPoint: .trailing))
+                                .frame(width: total > 0 ? geo.size.width * CGFloat(progress) / CGFloat(total) : 0, height: 2)
                         }
-                    }
-                    .frame(height: 2)
-
-                    Text(total == 0
-                         ? "Scanning history..."
-                         : "Day \(progress) of \(total)")
-                        .font(.jost(size: 10, weight: .light))
-                        .foregroundColor(ChronosTheme.faint)
+                    }.frame(height: 2)
+                    Text(total == 0 ? "Scanning history..." : "Day \(progress) of \(total)")
+                        .font(.jost(size: 10, weight: .light)).foregroundColor(ChronosTheme.faint)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
 
-            // Error
             if let err = errorMessage {
-                Text(err)
-                    .font(.jost(size: 11, weight: .light))
-                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.45))
-                    .lineSpacing(3)
+                Text(err).font(.jost(size: 11, weight: .light))
+                    .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.45)).lineSpacing(3)
             }
 
-            // Button — hidden while running
             if !isResyncing {
                 Button(action: runResync) {
                     Text(isDone ? "Sync Again" : "Start Resync")
-                        .font(.jost(size: 12, weight: .medium))
-                        .foregroundColor(ChronosTheme.gold)
-                        .tracking(1)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(ChronosTheme.gold.opacity(0.35), lineWidth: 1)
-                        )
+                        .font(.jost(size: 12, weight: .medium)).foregroundColor(ChronosTheme.gold).tracking(1)
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(ChronosTheme.gold.opacity(0.35), lineWidth: 1))
                 }
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(ChronosTheme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 14)
-                    .stroke(ChronosTheme.border, lineWidth: 1))
-        )
+        .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1)))
     }
 
     private func runResync() {
         guard let userId = supabase.session?.userId else { return }
-        isResyncing = true
-        progress = 0
-        total = 0
-        isDone = false
-        errorMessage = nil
-
+        isResyncing = true; progress = 0; total = 0; isDone = false; errorMessage = nil
         Task {
             do {
-                try await SyncCoordinator.shared.runBaselineBootstrap(
-                    userId: userId
-                ) { done, t in
-                    Task { @MainActor in
-                        self.progress = done
-                        self.total = t
-                    }
+                try await SyncCoordinator.shared.runBaselineBootstrap(userId: userId) { done, t in
+                    Task { @MainActor in self.progress = done; self.total = t }
                 }
                 await sync.loadDashboard(userId: userId)
                 isDone = true
-            } catch {
-                errorMessage = error.localizedDescription
-            }
+            } catch { errorMessage = error.localizedDescription }
             isResyncing = false
         }
     }
@@ -535,26 +842,92 @@ struct ResyncCard: View {
 // SHARED SUBCOMPONENTS
 // ─────────────────────────────────────────
 
-struct AccountStatsPills: View {
-    let score: DailyScore
+struct AccountSectionHeader: View {
+    let label: String
+    var body: some View {
+        HStack {
+            Text(label).font(.jost(size: 9, weight: .light)).foregroundColor(ChronosTheme.faint).tracking(2)
+            Rectangle().fill(ChronosTheme.border).frame(height: 1)
+        }.padding(.top, 4)
+    }
+}
 
+// R6: Phase 2 separator label — muted.opacity(0.7) replaces faint.opacity(0.6)
+struct AccountPhase2Separator: View {
     var body: some View {
         HStack(spacing: 10) {
-            AccountStatPill(label: "Today",
-                            value: "\(Int(score.chronosScore))",
-                            color: ChronosTheme.goldLight)
-            AccountStatPill(label: "D1",
-                            value: score.d1Autonomic.map { "\(Int($0))" } ?? "—",
-                            color: domainColor(score.d1Autonomic))
-            AccountStatPill(label: "D2",
-                            value: score.d2Sleep.map { "\(Int($0))" } ?? "—",
-                            color: domainColor(score.d2Sleep))
-            AccountStatPill(label: "D3",
-                            value: score.d3Activity.map { "\(Int($0))" } ?? "—",
-                            color: domainColor(score.d3Activity))
+            Rectangle().fill(ChronosTheme.border).frame(height: 1)
+            Text("PHASE 2").font(.jost(size: 8, weight: .light))
+                .foregroundColor(ChronosTheme.muted.opacity(0.7)).tracking(2).fixedSize()
+            Rectangle().fill(ChronosTheme.border).frame(height: 1)
+        }.padding(.top, 8)
+    }
+}
+
+struct AccountRow: View {
+    let icon: String; let label: String; let value: String
+    var valueColor: Color = ChronosTheme.muted
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+            Text(label).font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+            Spacer()
+            Text(value).font(.jost(size: 12, weight: .light)).foregroundColor(valueColor)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1)))
+    }
+}
+
+struct AccountTappableRow: View {
+    let icon: String; let label: String; let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).font(.system(size: 13, weight: .light)).foregroundColor(ChronosTheme.gold).frame(width: 20)
+                Text(label).font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.text)
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .light)).foregroundColor(ChronosTheme.faint)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 14)
+            .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border, lineWidth: 1)))
+        }.buttonStyle(.plain)
+    }
+}
+
+// R6: Opacity values raised — icon 0.4→0.6, label 0.5→0.65, value 0.4→0.55
+// Greyed rows are now legible while still clearly distinct from active rows.
+struct AccountRowGreyed: View {
+    let icon: String; let label: String; let value: String
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 13, weight: .light))
+                .foregroundColor(ChronosTheme.faint.opacity(0.6)).frame(width: 20)
+            Text(label).font(.jost(size: 13, weight: .light)).foregroundColor(ChronosTheme.muted.opacity(0.65))
+            Spacer()
+            if !value.isEmpty {
+                Text(value).font(.jost(size: 12, weight: .light)).foregroundColor(ChronosTheme.faint.opacity(0.55))
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(ChronosTheme.surface.opacity(0.5))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(ChronosTheme.border.opacity(0.4), lineWidth: 1)))
+    }
+}
+
+// Retained for external reference safety
+struct AccountStatsPills: View {
+    let score: DailyScore
+    var body: some View {
+        HStack(spacing: 10) {
+            AccountStatPill(label: "Today", value: "\(Int(score.chronosScore))", color: ChronosTheme.goldLight)
+            AccountStatPill(label: "D1", value: score.d1Autonomic.map { "\(Int($0))" } ?? "—", color: domainColor(score.d1Autonomic))
+            AccountStatPill(label: "D2", value: score.d2Sleep.map { "\(Int($0))" } ?? "—",      color: domainColor(score.d2Sleep))
+            AccountStatPill(label: "D3", value: score.d3Activity.map { "\(Int($0))" } ?? "—",   color: domainColor(score.d3Activity))
         }
     }
-
     private func domainColor(_ val: Double?) -> Color {
         guard let v = val else { return ChronosTheme.faint }
         if v >= 80 { return Color(red: 0.40, green: 0.82, blue: 0.50) }
@@ -565,79 +938,14 @@ struct AccountStatsPills: View {
 }
 
 struct AccountStatPill: View {
-    let label: String
-    let value: String
-    let color: Color
-
+    let label: String; let value: String; let color: Color
     var body: some View {
         VStack(spacing: 4) {
-            Text(value)
-                .font(.cormorant(size: 20, weight: .light))
-                .foregroundColor(color)
-            Text(label.uppercased())
-                .font(.jost(size: 8, weight: .light))
-                .foregroundColor(ChronosTheme.muted)
-                .tracking(1.5)
+            Text(value).font(.cormorant(size: 20, weight: .light)).foregroundColor(color)
+            Text(label.uppercased()).font(.jost(size: 8, weight: .light)).foregroundColor(ChronosTheme.muted).tracking(1.5)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(ChronosTheme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 12)
-                    .stroke(ChronosTheme.border, lineWidth: 1))
-        )
+        .frame(maxWidth: .infinity).padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(ChronosTheme.surface)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(ChronosTheme.border, lineWidth: 1)))
     }
 }
-
-struct AccountRow: View {
-    let icon: String
-    let label: String
-    let value: String
-    var valueColor: Color = ChronosTheme.muted
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .light))
-                .foregroundColor(ChronosTheme.gold)
-                .frame(width: 20)
-            Text(label)
-                .font(.jost(size: 13, weight: .light))
-                .foregroundColor(ChronosTheme.text)
-            Spacer()
-            Text(value)
-                .font(.jost(size: 12, weight: .light))
-                .foregroundColor(valueColor)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(ChronosTheme.surface)
-                .overlay(RoundedRectangle(cornerRadius: 14)
-                    .stroke(ChronosTheme.border, lineWidth: 1))
-        )
-    }
-}
-
-struct AccountInfoNote: View {
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 11, weight: .light))
-                .foregroundColor(ChronosTheme.gold.opacity(0.5))
-                .padding(.top, 1)
-            Text(text)
-                .font(.jost(size: 11, weight: .light))
-                .foregroundColor(ChronosTheme.faint)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 4)
-        .padding(.top, 8)
-    }
-}
-
-

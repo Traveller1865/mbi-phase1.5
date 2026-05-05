@@ -32,7 +32,6 @@ class SyncCoordinator: ObservableObject {
     func runDailySync(userId: String) async {
         guard syncState != .syncing("") else { return }
 
-        // Check if already synced today
         if let last = lastSyncDate, Calendar.current.isDateInToday(last) {
             await loadDashboard(userId: userId)
             return
@@ -41,6 +40,10 @@ class SyncCoordinator: ObservableObject {
         syncState = .syncing("Reading Apple Health data...")
 
         do {
+            // Re-request authorization — silently skips already-granted types,
+            // prompts only for new ones added in H-01
+            try await healthKit.requestAuthorization()
+            
             // 1. Read yesterday's metrics from HealthKit
             let metrics = try await healthKit.readYesterday()
 
@@ -78,6 +81,9 @@ class SyncCoordinator: ObservableObject {
 
     func runBaselineBootstrap(userId: String, onProgress: @escaping (Int, Int) -> Void) async throws {
         syncState = .syncing("Reading your Apple Health history...")
+        
+        // Re-request authorization for any new HealthKit types
+        try await healthKit.requestAuthorization()
 
         // Read full available history, up to 90 days
         let history = try await healthKit.readFullHistory(maxDays: 90)

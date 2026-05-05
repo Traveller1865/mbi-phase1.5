@@ -45,7 +45,7 @@ struct RootView: View {
                 MainTabView()
                     .task {
                         if let userId = supabase.session?.userId {
-                            try? await supabase.loadCurrentUser(userId: userId)
+                            _ = try? await supabase.loadCurrentUser(userId: userId)
                             await sync.runDailySync(userId: userId)
                         }
                     }

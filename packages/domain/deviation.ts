@@ -1,11 +1,14 @@
 // packages/domain/deviation.ts
 // MBI Scoring Engine — Deviation Detection
-// Version: 1.1 | ALL thresholds sourced from Scoring Engine Source of Truth v1.1
+// Version: 1.2 | H-01: Tier 1 metric expansion
 
 import type { Baseline, DailyInput, DeviationState, MetricDeviation } from "./contracts.ts";
 
 // ─────────────────────────────────────────
-// WEIGHTS (SoT §2)
+// WEIGHTS (SoT §2 + H-01 additions)
+// spo2       → D1 Autonomic (respiratory stress) — Weight 1×
+// resting_energy → D3 Activity (metabolic)       — Weight 1×
+// stand_hours    → D3 Activity (sedentary)        — Weight 1×
 // ─────────────────────────────────────────
 export const METRIC_WEIGHTS: Record<string, number> = {
   hrv: 2,
@@ -15,7 +18,11 @@ export const METRIC_WEIGHTS: Record<string, number> = {
   sleep_efficiency: 1.5,
   steps: 1,
   active_minutes: 1,
-  distance: 0, // supporting only
+  distance: 0,
+  // H-01
+  spo2: 1,
+  resting_energy: 1,
+  stand_hours: 1,
 };
 
 // ─────────────────────────────────────────
@@ -23,7 +30,6 @@ export const METRIC_WEIGHTS: Record<string, number> = {
 // ─────────────────────────────────────────
 function deviateHRV(value: number | null | undefined, baseline: Baseline): DeviationState {
   if (value == null || baseline.hrv_avg == null) return 0;
-  // Guardrail
   if (value < 25) return -2;
   const pctBelow = (baseline.hrv_avg - value) / baseline.hrv_avg;
   if (pctBelow > 0.30) return -2;
@@ -36,7 +42,6 @@ function deviateHRV(value: number | null | undefined, baseline: Baseline): Devia
 // ─────────────────────────────────────────
 function deviateRHR(value: number | null | undefined, baseline: Baseline): DeviationState {
   if (value == null || baseline.resting_hr_avg == null) return 0;
-  // Guardrail
   if (value > 90) return -2;
   const diff = value - baseline.resting_hr_avg;
   if (diff >= 10) return -2;
@@ -49,7 +54,6 @@ function deviateRHR(value: number | null | undefined, baseline: Baseline): Devia
 // ─────────────────────────────────────────
 function deviateRespRate(value: number | null | undefined, baseline: Baseline): DeviationState {
   if (value == null || baseline.respiratory_rate_avg == null) return 0;
-  // Guardrail
   if (value > 20) return -2;
   const diff = value - baseline.respiratory_rate_avg;
   if (diff >= 4) return -2;
@@ -62,9 +66,8 @@ function deviateRespRate(value: number | null | undefined, baseline: Baseline): 
 // ─────────────────────────────────────────
 function deviateSleepDuration(value: number | null | undefined, baseline: Baseline): DeviationState {
   if (value == null || baseline.sleep_duration_avg == null) return 0;
-  // Guardrail
   if (value < 5.5) return -2;
-  const diff = baseline.sleep_duration_avg - value; // positive = below baseline
+  const diff = baseline.sleep_duration_avg - value;
   if (diff >= 2) return -2;
   if (diff >= 1) return -1;
   return 0;
@@ -75,10 +78,9 @@ function deviateSleepDuration(value: number | null | undefined, baseline: Baseli
 // ─────────────────────────────────────────
 function deviateSleepEfficiency(value: number | null | undefined, baseline: Baseline): DeviationState {
   if (value == null || baseline.sleep_efficiency_avg == null) return 0;
-  // Guardrail
   if (value < 70) return -2;
   const diff = baseline.sleep_efficiency_avg - value;
-  if (diff >= 8) return -2; // treat hard as ≥8 per SoT
+  if (diff >= 8) return -2;
   if (diff >= 5) return -1;
   return 0;
 }
@@ -104,7 +106,65 @@ function deviateActiveMinutes(value: number | null | undefined): DeviationState 
 }
 
 // ─────────────────────────────────────────
+// SPO2 — Weight 1× (H-01 / D1 Autonomic)
+// Guardrail: <92% = hard flag (clinical low O2 territory)
+// Mild: 92–94% (suppressed but not critical)
+// Normal: ≥95%
+// Missing baseline → compare to absolute guardrails only
+// ─────────────────────────────────────────
+function deviateSpO2(value: number | null | undefined, baseline: Baseline): DeviationState {
+  if (value == null) return 0;
+  if (value < 92) return -2;
+  if (value < 95) return -1;
+  // If personal baseline exists and today is below it by >3%, flag mild
+  if (baseline.spo2_avg != null) {
+    const diff = baseline.spo2_avg - value;
+    if (diff >= 3) return -1;
+  }
+  return 0;
+}
+
+// ─────────────────────────────────────────
+// RESTING ENERGY — Weight 1× (H-01 / D3 Activity)
+// Metabolic suppression signal.
+// Uses personal baseline only — no universal guardrail
+// (highly individual: varies by body composition, age, sex)
+// Mild: >15% below personal baseline
+// Hard: >30% below personal baseline
+// Missing baseline → no deviation (cannot judge without context)
+// ─────────────────────────────────────────
+function deviateRestingEnergy(value: number | null | undefined, baseline: Baseline): DeviationState {
+  if (value == null || baseline.resting_energy_avg == null) return 0;
+  const pctBelow = (baseline.resting_energy_avg - value) / baseline.resting_energy_avg;
+  if (pctBelow > 0.30) return -2;
+  if (pctBelow >= 0.15) return -1;
+  return 0;
+}
+
+// ─────────────────────────────────────────
+// STAND HOURS — Weight 1× (H-01 / D3 Activity)
+// Apple's goal is 12 stand hours. Use that as the behavioral target.
+// Hard: <6 stand hours (half of goal — sedentary day)
+// Mild: <9 stand hours (below goal but not severe)
+// Normal: ≥9 stand hours
+// Personal baseline check: if below baseline by >3 hrs, flag mild
+// ─────────────────────────────────────────
+function deviateStandHours(value: number | null | undefined, baseline: Baseline): DeviationState {
+  if (value == null) return 0;
+  if (value < 6) return -2;
+  if (value < 9) return -1;
+  if (baseline.stand_hours_avg != null) {
+    const diff = baseline.stand_hours_avg - value;
+    if (diff >= 3) return -1;
+  }
+  return 0;
+}
+
+// ─────────────────────────────────────────
 // MAIN: compute all deviations
+// Architecture: every metric is optional.
+// null value → deviation = 0, metric participates with 0 weight effectively
+// (weight stays in array but deviation = 0 → no penalty, no benefit)
 // ─────────────────────────────────────────
 export function computeDeviations(
   input: DailyInput,
@@ -153,6 +213,25 @@ export function computeDeviations(
       value: input.active_minutes ?? null,
       deviation: deviateActiveMinutes(input.active_minutes),
       weight: METRIC_WEIGHTS.active_minutes,
+    },
+    // H-01: Tier 1 metrics
+    {
+      metric: "spo2",
+      value: input.spo2_pct ?? null,
+      deviation: deviateSpO2(input.spo2_pct, baseline),
+      weight: METRIC_WEIGHTS.spo2,
+    },
+    {
+      metric: "resting_energy",
+      value: input.resting_energy ?? null,
+      deviation: deviateRestingEnergy(input.resting_energy, baseline),
+      weight: METRIC_WEIGHTS.resting_energy,
+    },
+    {
+      metric: "stand_hours",
+      value: input.stand_hours ?? null,
+      deviation: deviateStandHours(input.stand_hours, baseline),
+      weight: METRIC_WEIGHTS.stand_hours,
     },
   ];
 }

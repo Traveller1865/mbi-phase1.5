@@ -1,9 +1,15 @@
 // ios/MBI/MBI/Views/IntelligenceCardView.swift
-// MBI Phase 1.5 — Health Intelligence · E-11 revised
-// Sheet presented when user taps a driver chip.
-// Content cached by metric key — no re-call on repeat taps.
-// Regenerates only when the driver changes (new day).
-// Framed as a resource the user chose to open — not a warning.
+// MBI Phase 1.5 — Health Intelligence
+// Epic 1 Sprint 1 — §3.4 Driver Detail Content Fix
+//
+// Changes:
+//   - IntelligenceSheet now accepts `driverContext: DriverTapContext`
+//   - IntelligenceCard now accepts and renders `driverContext`
+//   - "Why This Is Your Driver Today" section inserted above Key Takeaway
+//   - Section populated from passed navigation params — NO new Supabase call
+//   - Driver 1 uses "primary signal", Driver 2 uses "second-highest deviation"
+//   - Wellness framing only — no clinical language
+//   - Existing "What It Measures", Key Takeaway, closing tagline — UNCHANGED
 
 import SwiftUI
 
@@ -15,6 +21,7 @@ import SwiftUI
 struct IntelligenceSheet: View {
     let metric: String
     let score: DailyScore
+    let driverContext: DriverTapContext      // §3.4: receives deviation data
     @Binding var cachedContent: [String: IntelligenceContent]
     @Environment(\.dismiss) var dismiss
 
@@ -92,6 +99,7 @@ struct IntelligenceSheet: View {
                     IntelligenceCard(
                         metric: metric,
                         score: score,
+                        driverContext: driverContext,
                         cachedContent: $cachedContent
                     )
                     .padding(.horizontal, 20)
@@ -104,13 +112,14 @@ struct IntelligenceSheet: View {
 
 // ─────────────────────────────────────────
 // INTELLIGENCE CARD
-// Renders inside the sheet. Reads from and writes to
-// the shared cache in DashboardView.
+// §3.4: Adds "Why This Is Your Driver Today" above Key Takeaway.
+// Everything else — What It Measures, Key Takeaway, closing tagline — UNCHANGED.
 // ─────────────────────────────────────────
 
 struct IntelligenceCard: View {
     let metric: String
     let score: DailyScore
+    let driverContext: DriverTapContext      // §3.4: deviation data — no new fetch
     @Binding var cachedContent: [String: IntelligenceContent]
 
     @State private var isLoading = false
@@ -149,13 +158,21 @@ struct IntelligenceCard: View {
 
             } else if let content {
 
-                // ── What it measures ──
+                // ── What it measures (UNCHANGED) ──
                 IntelligenceSection(
                     label: "WHAT IT MEASURES",
                     text: content.body
                 )
 
-                // ── Key takeaway ──
+                // ── §3.4: Why This Is Your Driver Today ──
+                // Inserted above Key Takeaway.
+                // Populated from driverContext params — deterministic, no LLM call.
+                DriverReasonSection(
+                    metricName: metricName,
+                    context: driverContext
+                )
+
+                // ── Key takeaway (UNCHANGED) ──
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 14)
                         .fill(ChronosTheme.goldDim)
@@ -183,7 +200,7 @@ struct IntelligenceCard: View {
                     .padding(16)
                 }
 
-                // ── Headline as closing thought ──
+                // ── Closing tagline (UNCHANGED) ──
                 Text(content.headline)
                     .font(.cormorantItalic(size: 17))
                     .foregroundColor(ChronosTheme.muted)
@@ -196,7 +213,6 @@ struct IntelligenceCard: View {
     }
 
     private func loadIfNeeded() async {
-        // Already cached — nothing to do
         if cachedContent[metric] != nil { return }
 
         isLoading = true
@@ -278,7 +294,101 @@ struct IntelligenceCard: View {
 }
 
 // ─────────────────────────────────────────
-// INTELLIGENCE SECTION
+// DRIVER REASON SECTION  §3.4
+//
+// "Why This Is Your Driver Today"
+// Inserted above Key Takeaway in IntelligenceCard.
+//
+// Spec:
+//   - References metric name, today's value, baseline value, deviation %
+//   - Driver 1 uses "primary signal", Driver 2 uses "second-highest deviation"
+//   - Wellness framing only — no clinical language
+//   - All data from driverContext params — no Supabase call
+// ─────────────────────────────────────────
+
+struct DriverReasonSection: View {
+    let metricName: String
+    let context: DriverTapContext
+
+    // §3.4: Plain-language explanation built from deterministic deviation values
+    var explanationText: String {
+        guard let todayValue = context.formattedTodayValue,
+              let baseline = context.baselineValue,
+              let direction = context.deviationDirection,
+              let magnitude = context.deviationMagnitudePct else {
+            // Fallback: baseline still building
+            return "Your \(metricName) is your \(signalPhrase) today. Your baseline is still being established — your body is being listened to."
+        }
+
+        let formattedBaseline = formatBaseline(value: baseline, metricRaw: context.metric)
+        let directionWord = direction == .below ? "below" : "above"
+        let magnitudePct = Int(magnitude.rounded())
+        let signalRef = context.isDriver1 ? "primary signal" : "second-highest deviation"
+
+        // §3.4 voice rules: wellness framing, reference plain number and percentage, not alarming
+        switch direction {
+        case .below:
+            return "Your \(metricName) is \(todayValue) today. Your 7-day baseline is \(formattedBaseline) — \(magnitudePct)% \(directionWord) your norm. This is your \(signalRef) your body is prioritising recovery right now."
+        case .above:
+            return "Your \(metricName) is \(todayValue) today. Your 7-day baseline is \(formattedBaseline) — \(magnitudePct)% \(directionWord) your norm. This is your \(signalRef) your body is showing strong capacity today."
+        }
+    }
+
+    /// §3.4: "primary signal" for Driver 1, "second-highest deviation" for Driver 2
+    var signalPhrase: String {
+        context.isDriver1 ? "primary signal" : "second-highest deviation"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WHY THIS IS YOUR DRIVER TODAY")
+                .font(.jost(size: 9, weight: .light))
+                .foregroundColor(ChronosTheme.gold.opacity(0.6))
+                .tracking(2.5)
+
+            Rectangle()
+                .fill(ChronosTheme.gold.opacity(0.12))
+                .frame(height: 1)
+
+            Text(explanationText)
+                .font(.jost(size: 14, weight: .light))
+                .foregroundColor(Color(red: 0.865, green: 0.853, blue: 0.830))
+                .lineSpacing(6)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Format baseline value in the same unit style as the chip value
+    private func formatBaseline(value: Double, metricRaw: String) -> String {
+        switch metricRaw {
+        case "hrv":
+            return "\(Int(value))ms"
+        case "resting_hr":
+            return "\(Int(value)) bpm"
+        case "respiratory_rate":
+            return "\(String(format: "%.1f", value)) rpm"
+        case "sleep_duration":
+            let hrs = Int(value)
+            let mins = Int((value - Double(hrs)) * 60)
+            return mins > 0 ? "\(hrs)h \(mins)m" : "\(hrs)h"
+        case "sleep_efficiency":
+            return "\(Int(value))%"
+        case "steps":
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            return (formatter.string(from: NSNumber(value: Int(value))) ?? "\(Int(value))") + " steps"
+        case "active_minutes":
+            return "\(Int(value)) min"
+        case "distance":
+            return "\(String(format: "%.1f", value)) km"
+        default:
+            return "\(String(format: "%.1f", value))"
+        }
+    }
+}
+
+// ─────────────────────────────────────────
+// INTELLIGENCE SECTION (UNCHANGED)
 // ─────────────────────────────────────────
 
 struct IntelligenceSection: View {
@@ -306,7 +416,7 @@ struct IntelligenceSection: View {
 }
 
 // ─────────────────────────────────────────
-// CONTENT MODEL
+// CONTENT MODEL (UNCHANGED)
 // ─────────────────────────────────────────
 
 struct IntelligenceContent {

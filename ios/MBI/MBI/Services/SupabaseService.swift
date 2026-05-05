@@ -107,6 +107,47 @@ class SupabaseService: ObservableObject {
         try await patchRequest(url: url, body: body)
         try await loadCurrentUser(userId: userId)
     }
+    func updateOnboardingProfile(
+            userId: String,
+            displayName: String,
+            birthday: String?,
+            heightFt: Int?,
+            heightIn: Int?,
+            weightLbs: Double?
+        ) async throws {
+            var body: [String: Any] = ["display_name": displayName]
+            if let v = birthday  { body["birthday"]   = v }
+            if let v = heightFt  { body["height_ft"]  = v }
+            if let v = heightIn  { body["height_in"]  = v }
+            if let v = weightLbs { body["weight_lbs"] = v }
+            let url = URL(string: "\(Config.supabaseURL)/rest/v1/users?id=eq.\(userId)")!
+            try await patchRequest(url: url, body: body)
+            try await loadCurrentUser(userId: userId)
+        }
+    
+    func updateProfile(
+            userId: String,
+            stepGoal: Int? = nil,
+            healthGoal: String? = nil,
+            weightLbs: Double? = nil,
+            wakeTime: String? = nil,
+            sleepTime: String? = nil,
+            morningBriefEnabled: Bool? = nil
+        ) async throws {
+            var body: [String: Any] = [:]
+            if let v = stepGoal            { body["step_goal"]              = v }
+            if let v = healthGoal          { body["health_goal"]            = v }
+            if let v = weightLbs           { body["weight_lbs"]             = v }
+            if let v = wakeTime            { body["wake_time"]              = v }
+            if let v = sleepTime           { body["sleep_time"]             = v }
+            if let v = morningBriefEnabled { body["morning_brief_enabled"]  = v }
+     
+            guard !body.isEmpty else { return }
+     
+            let url = URL(string: "\(Config.supabaseURL)/rest/v1/users?id=eq.\(userId)")!
+            try await patchRequest(url: url, body: body)
+            try await loadCurrentUser(userId: userId)  // refresh @Published currentUser
+        }
 
     func markOnboardingComplete(userId: String) async throws {
         let url = URL(string: "\(Config.supabaseURL)/rest/v1/users?id=eq.\(userId)")!
@@ -408,16 +449,21 @@ extension SupabaseService {
     // MARK: - Baselines (for Trend deviation callouts — R-02)
     
     func fetchLatestBaselines(userId: String) async throws -> [String: Double] {
-        let url = URL(string: "\(Config.supabaseURL)/rest/v1/baselines?user_id=eq.\(userId)&order=computed_at.desc&limit=1&select=*")!
+        // Column is "computed_on", not "computed_at"
+        let url = URL(string: "\(Config.supabaseURL)/rest/v1/baselines?user_id=eq.\(userId)&order=computed_on.desc&limit=1&select=*")!
         let data = try await getRequest(url: url)
         guard let rows = data as? [[String: Any]], let row = rows.first else { return [:] }
-        
-        // Extract all metric baseline keys — any Double value not a metadata field
-        let skip = Set(["id", "user_id", "computed_at", "days_used", "created_at"])
+
+        let skip = Set(["id", "user_id", "computed_on", "window_days", "domain_version", "created_at"])
         var result: [String: Double] = [:]
         for (key, val) in row {
-            guard !skip.contains(key), let v = val as? Double else { continue }
-            result[key] = v
+            guard !skip.contains(key) else { continue }
+            // Values may arrive as Double or as String — handle both
+            if let v = val as? Double {
+                result[key] = v
+            } else if let s = val as? String, let v = Double(s) {
+                result[key] = v
+            }
         }
         return result
     }
@@ -449,4 +495,116 @@ extension SupabaseService {
                 return (date: date, value: val)
             }
         }
+    // MARK: - Raw Inputs for a specific date (for driver chip data points)
+
+    func fetchInputs(userId: String, date: String) async throws -> [String: Double?] {
+        let url = URL(string: "\(Config.supabaseURL)/rest/v1/daily_inputs?user_id=eq.\(userId)&date=eq.\(date)&select=*&limit=1")!
+        let data = try await getRequest(url: url)
+        guard let rows = data as? [[String: Any]], let row = rows.first else { return [:] }
+
+        let skip = Set(["id", "user_id", "date", "source_version", "created_at", "data_quality_flags"])
+        var result: [String: Double?] = [:]
+        for (key, val) in row {
+            guard !skip.contains(key) else { continue }
+            if let v = val as? Double { result[key] = v }
+            else if let v = val as? Int { result[key] = Double(v) }
+            else { result[key] = nil }
+        }
+        return result
+    }
+
+    // MARK: - History Day Count (for D5 progress indicator — item 4)
+
+    func fetchHistoryDayCount(userId: String) async throws -> Int {
+        let today = todayString()
+        // Count distinct dates in daily_inputs before today
+        let url = URL(string: "\(Config.supabaseURL)/rest/v1/daily_inputs?user_id=eq.\(userId)&date=lt.\(today)&select=date")!
+        let data = try await getRequest(url: url)
+        guard let rows = data as? [[String: Any]] else { return 0 }
+        return rows.count
+    }
+    
+    // MARK: - Trend Aggregates (Sprint 2)
+     
+    /// Fetches pre-computed weekly or monthly aggregate rows for the Trend tab.
+    /// The iOS client never aggregates raw daily_scores rows — this is the only
+    /// approved source for 8W and 12M window data.
+    func fetchTrendAggregates(userId: String, windowType: String, limit: Int) async throws -> [[String: Any]] {
+        let url = URL(string:
+            "\(Config.supabaseURL)/rest/v1/trend_aggregates" +
+            "?user_id=eq.\(userId)" +
+            "&window_type=eq.\(windowType)" +
+            "&order=window_start.asc" +
+            "&limit=\(limit)" +
+            "&select=*"
+        )!
+        let data = try await getRequest(url: url)
+        return (data as? [[String: Any]]) ?? []
+    }
+     
+    /// Fetches the last N daily_scores rows for the 7D window chart and metric tiles.
+    /// Returns rows ordered ascending (oldest first) for chart rendering.
+    func fetchRecentDailyScores(userId: String, limit: Int) async throws -> [[String: Any]] {
+        let url = URL(string:
+            "\(Config.supabaseURL)/rest/v1/daily_scores" +
+            "?user_id=eq.\(userId)" +
+            "&order=date.desc" +
+            "&limit=\(limit)" +
+            "&select=date,chronos_score,score_band,driver_1,driver_2"
+        )!
+        let data = try await getRequest(url: url)
+        return ((data as? [[String: Any]]) ?? []).reversed()
+    }
+     
+    /// Fetches the last N daily_inputs rows for per-metric tile values in the 7D window.
+    /// Returns rows ordered ascending for chart rendering.
+    func fetchRecentDailyInputs(userId: String, limit: Int) async -> [[String: Any]] {
+        do {
+            let url = URL(string:
+                "\(Config.supabaseURL)/rest/v1/daily_inputs" +
+                "?user_id=eq.\(userId)" +
+                "&order=date.desc" +
+                "&limit=\(limit)" +
+                "&select=date,hrv_ms,resting_hr_bpm,respiratory_rate_rpm,sleep_duration_hrs,sleep_efficiency_pct,steps,active_minutes"
+            )!
+            let data = try await getRequest(url: url)
+            return ((data as? [[String: Any]]) ?? []).reversed()
+        } catch {
+            print("[SupabaseService] fetchRecentDailyInputs empty: \(error)")
+            return []
+        }
+    }
+     
+    /// Calls the narrate-trend Edge Function and returns the generated narrative string.
+    /// The iOS client caches the result — this must not be called on every tab switch.
+    func fetchTrendNarrative(
+        userId: String,
+        windowType: String,
+        windowStart: String,
+        windowEnd: String,
+        chronosAvg: Double,
+        chronosMin: Double,
+        chronosMax: Double,
+        trendDirection: String,
+        topDrivers: [String],
+        daysInWindow: Int
+    ) async throws -> String {
+        let body: [String: Any] = [
+            "userId":          userId,
+            "window_type":     windowType,
+            "window_start":    windowStart,
+            "window_end":      windowEnd,
+            "chronos_avg":     chronosAvg,
+            "chronos_min":     chronosMin,
+            "chronos_max":     chronosMax,
+            "trend_direction": trendDirection,
+            "top_drivers":     topDrivers,
+            "days_in_window":  daysInWindow,
+        ]
+        let result = try await callEdgeFunction(url: Config.narrateTrendURL, body: body)
+        guard let narrative = result["narrative"] as? String, !narrative.isEmpty else {
+            throw MBIError.syncFailed("Trend narrative response empty")
+        }
+        return narrative
+    }
 }

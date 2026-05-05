@@ -10,6 +10,9 @@ enum Config {
     static var scoreURL: URL { URL(string: "\(supabaseURL)/functions/v1/score")! }
     static var narrateURL: URL { URL(string: "\(supabaseURL)/functions/v1/narrate")! }
     static var adminURL: URL { URL(string: "\(supabaseURL)/functions/v1/admin")! }
+    static var narrateTrendURL: URL { URL(string: "\(supabaseURL)/functions/v1/narrate-trend")! }
+    static let narrateDomainsPatternURL  = URL(string: "\(supabaseURL)/functions/v1/narrate-domains-pattern")!
+    static let narrateDomainExpandedURL  = URL(string: "\(supabaseURL)/functions/v1/narrate-domain-expanded")!
 
     static let defaultStepGoal = 8000
     static let minHistoryDaysForScore = 3

@@ -1,5 +1,6 @@
 // ios/MBI/Services/HealthKitManager.swift
 // MBI Phase 1 — HealthKit Integration
+// Version: 1.1 | H-01: Tier 1 metric expansion
 // Authorization and reads managed here only. Raw payload sent to ingestion layer.
 
 import Foundation
@@ -9,7 +10,7 @@ class HealthKitManager: ObservableObject {
     static let shared = HealthKitManager()
     private let store = HKHealthStore()
     
-    // All 7 primary metrics + distance (supporting)
+    // 7 original primary metrics + 3 Tier 1 + distance (supporting)
     private let readTypes: Set<HKObjectType> = {
         var types = Set<HKObjectType>()
         let quantityTypes: [HKQuantityTypeIdentifier] = [
@@ -19,12 +20,20 @@ class HealthKitManager: ObservableObject {
             .stepCount,
             .appleExerciseTime,
             .distanceWalkingRunning,
+            // H-01: Tier 1
+            .oxygenSaturation,
+            .basalEnergyBurned,
+            .appleStandTime,         // used to derive stand hours
         ]
         for id in quantityTypes {
             if let t = HKQuantityType.quantityType(forIdentifier: id) { types.insert(t) }
         }
         if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
             types.insert(sleep)
+        }
+        // Stand hour count — category type, not quantity
+        if let standHour = HKObjectType.categoryType(forIdentifier: .appleStandHour) {
+            types.insert(standHour)
         }
         return types
     }()
@@ -47,7 +56,6 @@ class HealthKitManager: ObservableObject {
     
     // ─────────────────────────────────────────
     // 7-DAY HISTORY BOOTSTRAP
-    // Returns array of RawDayMetrics, one per calendar day
     // ─────────────────────────────────────────
     
     func readSevenDayHistory() async throws -> [RawDayMetrics] {
@@ -61,12 +69,11 @@ class HealthKitManager: ObservableObject {
             results.append(metrics)
         }
         
-        return results.reversed() // oldest to newest
+        return results.reversed()
     }
     
     // ─────────────────────────────────────────
     // FULL HISTORY READ — onboarding bootstrap
-    // Reads all available history up to 90 days
     // ─────────────────────────────────────────
     
     func readFullHistory(maxDays: Int = 90) async throws -> [RawDayMetrics] {
@@ -83,25 +90,22 @@ class HealthKitManager: ObservableObject {
                 continue
             }
             
-            let h = metrics.hrv_ms
-            let r = metrics.resting_hr_bpm
-            let rr = metrics.respiratory_rate_rpm
-            let s = metrics.sleep_duration_hrs
-            let st = metrics.steps
-            let hasAnyData = h != nil || r != nil || rr != nil || s != nil || st != nil
+            let hasAnyData = metrics.hrv_ms != nil
+                || metrics.resting_hr_bpm != nil
+                || metrics.respiratory_rate_rpm != nil
+                || metrics.sleep_duration_hrs != nil
+                || metrics.steps != nil
             
             if hasAnyData {
                 results.append(metrics)
                 consecutiveEmpty = 0
             } else {
                 consecutiveEmpty += 1
-                if consecutiveEmpty >= 5 && results.count >= 7 {
-                    break
-                }
+                if consecutiveEmpty >= 5 && results.count >= 7 { break }
             }
         }
         
-        return results.reversed() // oldest to newest
+        return results.reversed()
     }
     
     // ─────────────────────────────────────────
@@ -128,16 +132,22 @@ class HealthKitManager: ObservableObject {
             throw HealthKitError.readFailed("Date range computation failed")
         }
         
-        async let hrv = readHRV(start: start, end: end)
-        async let rhr = readRestingHeartRate(start: start, end: end)
-        async let rr = readRespiratoryRate(start: start, end: end)
-        async let sleep = readSleep(start: start, end: end)
-        async let steps = readSteps(start: start, end: end)
-        async let activeMin = readActiveMinutes(start: start, end: end)
-        async let distance = readDistance(start: start, end: end)
+        async let hrv        = readHRV(start: start, end: end)
+        async let rhr        = readRestingHeartRate(start: start, end: end)
+        async let rr         = readRespiratoryRate(start: start, end: end)
+        async let sleep      = readSleep(start: start, end: end)
+        async let steps      = readSteps(start: start, end: end)
+        async let activeMin  = readActiveMinutes(start: start, end: end)
+        async let distance   = readDistance(start: start, end: end)
+        // H-01: Tier 1
+        async let spo2       = readSpO2(start: start, end: end)
+        async let restingEng = readRestingEnergy(start: start, end: end)
+        async let standHrs   = readStandHours(start: start, end: end)
         
-        let (hrvVal, rhrVal, rrVal, sleepData, stepsVal, activeMinVal, distanceVal) =
-        try await (hrv, rhr, rr, sleep, steps, activeMin, distance)
+        let (hrvVal, rhrVal, rrVal, sleepData, stepsVal, activeMinVal, distanceVal,
+             spo2Val, restingEngVal, standHrsVal) =
+            try await (hrv, rhr, rr, sleep, steps, activeMin, distance,
+                       spo2, restingEng, standHrs)
         
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
@@ -151,12 +161,15 @@ class HealthKitManager: ObservableObject {
             sleep_efficiency_pct: sleepData?.efficiency,
             steps: stepsVal,
             active_minutes: activeMinVal,
-            distance_km: distanceVal
+            distance_km: distanceVal,
+            spo2_pct: spo2Val,
+            resting_energy: restingEngVal,
+            stand_hours: standHrsVal
         )
     }
     
     // ─────────────────────────────────────────
-    // INDIVIDUAL METRIC READS
+    // INDIVIDUAL METRIC READS — existing
     // ─────────────────────────────────────────
     
     private func readHRV(start: Date, end: Date) async throws -> Double? {
@@ -198,17 +211,12 @@ class HealthKitManager: ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                    return
-                }
+                if let error = error { continuation.resume(throwing: error); return }
                 
                 guard let samples = samples as? [HKCategorySample], !samples.isEmpty else {
-                    continuation.resume(returning: nil)
-                    return
+                    continuation.resume(returning: nil); return
                 }
                 
-                // Calculate total sleep duration (inBed + asleep stages)
                 var asleepSeconds: TimeInterval = 0
                 var inBedSeconds: TimeInterval = 0
                 
@@ -217,7 +225,6 @@ class HealthKitManager: ObservableObject {
                     if sample.value == HKCategoryValueSleepAnalysis.inBed.rawValue {
                         inBedSeconds += duration
                     } else {
-                        // All asleep stages (core, deep, REM)
                         asleepSeconds += duration
                     }
                 }
@@ -226,15 +233,56 @@ class HealthKitManager: ObservableObject {
                 let efficiency = totalBed > 0 ? (asleepSeconds / totalBed) * 100.0 : nil
                 let durationHrs = asleepSeconds / 3600.0
                 
-                if durationHrs < 0.5 {
-                    continuation.resume(returning: nil)
-                    return
-                }
+                if durationHrs < 0.5 { continuation.resume(returning: nil); return }
                 
-                continuation.resume(returning: SleepData(
-                    duration: durationHrs,
-                    efficiency: efficiency
-                ))
+                continuation.resume(returning: SleepData(duration: durationHrs, efficiency: efficiency))
+            }
+            store.execute(query)
+        }
+    }
+    
+    // ─────────────────────────────────────────
+    // INDIVIDUAL METRIC READS — H-01 Tier 1
+    // ─────────────────────────────────────────
+    
+    // SpO2 — average of all readings in the window
+    // HKUnit: percent() maps to 0.0–1.0 in HealthKit; multiply by 100
+    private func readSpO2(start: Date, end: Date) async throws -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .oxygenSaturation) else { return nil }
+        guard let val = try await readAverageQuantity(type: type, start: start, end: end, unit: .percent()) else { return nil }
+        // HealthKit returns SpO2 as 0.0–1.0 fraction; convert to percentage
+        return val * 100.0
+    }
+    
+    // Resting Energy (Basal Energy Burned) — daily sum, kcal
+    private func readRestingEnergy(start: Date, end: Date) async throws -> Double? {
+        guard let type = HKQuantityType.quantityType(forIdentifier: .basalEnergyBurned) else { return nil }
+        return try await readSumQuantity(type: type, start: start, end: end, unit: .kilocalorie())
+    }
+    
+    // Stand Hours — count of HKCategoryValueAppleStandHour.stood samples
+    // Each stood sample = 1 hour where the user stood for at least 1 minute
+    private func readStandHours(start: Date, end: Date) async throws -> Double? {
+        guard let standType = HKObjectType.categoryType(forIdentifier: .appleStandHour) else { return nil }
+        
+        return try await withCheckedThrowingContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+            let query = HKSampleQuery(
+                sampleType: standType,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error = error { continuation.resume(throwing: error); return }
+                guard let samples = samples as? [HKCategorySample] else {
+                    continuation.resume(returning: nil); return
+                }
+                // Count samples where value == stood (1), not idle (0)
+                let stoodCount = samples.filter {
+                    $0.value == HKCategoryValueAppleStandHour.stood.rawValue
+                }.count
+                // Return nil if no data at all (watch not worn), not 0
+                continuation.resume(returning: samples.isEmpty ? nil : Double(stoodCount))
             }
             store.execute(query)
         }
@@ -277,7 +325,6 @@ class HealthKitManager: ObservableObject {
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
             let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, stats, error in
                 if let error = error {
-                    // HKError 11 = no data for predicate — treat as nil, not a failure
                     let nsError = error as NSError
                     if nsError.domain == "com.apple.healthkit" && nsError.code == 11 {
                         continuation.resume(returning: nil)
@@ -306,6 +353,10 @@ class HealthKitManager: ObservableObject {
         let steps: Int?
         let active_minutes: Int?
         let distance_km: Double?
+        // H-01: Tier 1
+        let spo2_pct: Double?
+        let resting_energy: Double?
+        let stand_hours: Double?
         
         func toPayloadDict(userId: String) -> [String: Any] {
             var metrics: [String: Any] = [:]
@@ -317,13 +368,17 @@ class HealthKitManager: ObservableObject {
             if let v = steps { metrics["steps"] = v }
             if let v = active_minutes { metrics["active_minutes"] = v }
             if let v = distance_km { metrics["distance_km"] = v }
+            // H-01: Tier 1
+            if let v = spo2_pct { metrics["spo2_pct"] = v }
+            if let v = resting_energy { metrics["resting_energy"] = v }
+            if let v = stand_hours { metrics["stand_hours"] = v }
             return ["userId": userId, "date": date, "metrics": metrics]
         }
     }
     
     struct SleepData {
-        let duration: Double   // hours
-        let efficiency: Double? // 0–100
+        let duration: Double
+        let efficiency: Double?
     }
     
     enum HealthKitError: Error, LocalizedError {
